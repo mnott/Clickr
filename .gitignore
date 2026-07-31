@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Compiled native helper — built from native/clickr-helper.swift by
+# scripts/build-native.sh, so it must never be committed.
+bin/
+*.dSYM/
+
+# Logs and local env
+*.log
+npm-debug.log*
+.env
+.env.*
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Test artifacts
+/tmp-clickr-*
+clickr-shot-*.png
+
+# PAI session artifacts
+Notes/
+memory/
+_index.md
+clickr.md
