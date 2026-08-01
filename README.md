@@ -8,7 +8,19 @@ whether an app exposes AppleScript, an accessibility tree, or an API. If you can
 and click it, clickr can drive it. This is deliberately general-purpose: the point is
 instrumentation of *any* app, not a curated set of supported ones.
 
-## Install
+## Quick start
+
+Tell Claude Code:
+
+> Clone https://github.com/mnott/Clickr and set it up for me
+
+Or install with a single command:
+
+```bash
+npm install -g @tekmidian/clickr && clickr install
+```
+
+Or manually, if you want the tests and a checkout:
 
 ```bash
 git clone https://github.com/mnott/Clickr.git
@@ -17,7 +29,12 @@ npm install          # also builds: the Swift helper and the TypeScript server
 node dist/cli.js install
 ```
 
-Then **restart Claude Code**.
+Any of these, then **restart Claude Code** — the tools do not appear until you do.
+
+> Use `npm install -g`, not `npx`. The installer writes an absolute path to itself into
+> `~/.claude.json`, and an `npx` cache directory is not a stable home for that — clearing
+> the cache would silently break the registration. `clickr install` refuses to run from a
+> cache directory for exactly that reason.
 
 `install` does four things: builds the native Swift helper if missing, registers the MCP
 server in `~/.claude.json` (backing that file up first), installs the Claude Code skill

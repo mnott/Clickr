@@ -130,6 +130,21 @@ function install() {
     process.exit(1);
   }
 
+  // The registration stores an absolute path to this package. An npx cache is not a
+  // stable home for that — clearing the cache would break the registration silently,
+  // long after the install appeared to succeed. Refuse rather than leave that trap.
+  if (/[\\/](_npx|\.npm[\\/]_cacache)[\\/]/.test(packageRoot)) {
+    console.log(c.bad("refusing to install from an npx cache directory."));
+    console.log(c.dim(`  ${packageRoot}`));
+    console.log();
+    console.log("  clickr registers an absolute path to itself in ~/.claude.json, and this");
+    console.log("  directory can be cleared at any time, which would break that silently.");
+    console.log();
+    console.log(c.bold("  Install globally instead:"));
+    console.log("    npm install -g @tekmidian/clickr && clickr install");
+    process.exit(1);
+  }
+
   if (!helperBuilt()) {
     console.log("Building the native helper…");
     if (!buildNative()) {

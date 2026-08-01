@@ -11,8 +11,15 @@ not be your first choice.
 
 ## Installing clickr
 
-When asked to install clickr — "download github.com/mnott/clickr and install it" or
-similar — run this, from any directory the user is happy to keep a checkout in:
+When asked to install clickr — "clone github.com/mnott/Clickr and set it up for me" or
+similar — the shortest reliable path is:
+
+```bash
+npm install -g @tekmidian/clickr && clickr install
+```
+
+Or from source, if the user wants a checkout they can run the tests from. Clone into a
+directory they are happy to keep, not a temporary one — the registration points at it:
 
 ```bash
 git clone https://github.com/mnott/Clickr.git
@@ -20,6 +27,10 @@ cd Clickr
 npm install          # the prepare script builds the Swift helper and the TS server
 node dist/cli.js install
 ```
+
+Do **not** use `npx`: the installer writes an absolute path to itself into
+`~/.claude.json`, and it refuses to run from an npx cache because clearing that cache
+would break the registration silently.
 
 `install` builds the native helper if missing, registers the MCP server in
 `~/.claude.json` (backing that file up to `~/.claude.json.bak-clickr` first), installs

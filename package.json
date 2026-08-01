@@ -1,6 +1,6 @@
 {
   "name": "@tekmidian/clickr",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Clickr — macOS screen measurement and input control MCP for Claude Code. Screenshot any display, click any global coordinate, type into any application.",
   "type": "module",
   "main": "dist/index.js",
