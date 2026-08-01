@@ -38,10 +38,18 @@ YouTube's first checkbox made a bulk-action toolbar appear, which pushed every r
 ~64px. Queued clicks landed one row off and selected a *private* family video, one click
 away from publishing it. A `ref` in the extension would have been immune.
 
-**Rule: any UI that inserts or removes chrome on interaction invalidates queued
-coordinates.** Re-query after every state change. Never batch coordinate clicks across an
-action that can reflow the layout. The same applies to display changes — resolution
-switches (an external display sleeping, VNC reconnecting) silently move every window.
+**Rule: treat a coordinate as valid only for the state you measured it in.** That run
+produced ~6 silent mis-clicks from three distinct triggers:
+
+- **Layout reflow** — a page inserts or removes chrome and everything below shifts.
+  Re-query after every state change; never batch coordinate clicks across an action that
+  can reflow. `find_elements` takes ~60ms, so re-querying is nearly always cheaper than
+  being wrong.
+- **Display geometry change** — an external display sleeping or a VNC client reconnecting
+  at a different resolution moves every window. No automatic protection yet; re-read
+  `list_displays`/`list_windows` if the session is long or the display may have changed.
+- **Occlusion** — a window capture composites the target unobstructed, so a coordinate
+  read off it can hit whatever is really on top. `screenshot` warns about this.
 
 ## Use text, not pixels
 
@@ -90,7 +98,13 @@ coordinate from one goes straight into another.
 A synthetic click does *not* activate the app it lands on. Always pass `app` to
 `type_text` and `press_key`: it activates the target first and **refuses to type** if
 that app is not frontmost, which turns "typed into the wrong window" into a harmless
-error. Use `method: "paste"` for long text, URLs, and paths.
+error.
+
+**Any field with autocomplete or an IME gets `method: "paste"`, never keystrokes.**
+Autocompleting fields re-enter and reorder characters between keystrokes:
+`https://github.com/new` arrived as `thub.co/gim/new/` in Chrome's omnibox. Applies to
+URL bars, search boxes, and the Open dialog's Cmd+Shift+G path field. Paste is also the
+safe path for text containing accented or non-Latin characters.
 
 **Do not use the keyboard or mouse while clickr is driving** — concurrent input causes
 dropped characters and misdirected clicks.

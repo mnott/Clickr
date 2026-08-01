@@ -690,7 +690,12 @@ export const tools: Tool[] = [
           enum: ["keystroke", "paste"],
           description:
             "'keystroke' types character by character (default). 'paste' puts the text on the " +
-            "clipboard, presses cmd+V, then restores the previous clipboard contents.",
+            "clipboard, presses cmd+V, then restores the previous clipboard contents. " +
+            "ALWAYS use 'paste' for any field with autocomplete or an IME — URL bars, search " +
+            "boxes, file-path fields. Such fields re-enter and reorder characters between " +
+            "keystrokes, so typed text arrives scrambled ('https://github.com/new' became " +
+            "'thub.co/gim/new/' in Chrome's omnibox). Paste is also safer for accented and " +
+            "non-Latin text, and much faster for long strings.",
         },
         delay: {
           ...num,

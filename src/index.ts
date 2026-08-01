@@ -34,13 +34,17 @@ const server = new Server(
       "Displays left of or above the main display have negative coordinates, and any number " +
       "of displays is supported. find_elements, list_windows, list_displays, screenshot and " +
       "click all speak this same space.\n\n" +
-      "STALE COORDINATES ARE THE MAIN HAZARD. Any UI that inserts or removes chrome on " +
-      "interaction shifts everything below it, and a display resolution change moves every " +
-      "window. Re-query after each state change; never batch coordinate clicks across an " +
-      "action that can reflow the layout.\n\n" +
+      "STALE COORDINATES ARE THE MAIN HAZARD — treat a coordinate as valid only for the " +
+      "state you measured it in. Three things invalidate one silently: a page inserting or " +
+      "removing chrome so everything below shifts, a display resolution change moving every " +
+      "window, and capturing a window that is occluded (the image shows it unobstructed, but " +
+      "the click hits whatever is on top). Re-query after each state change; find_elements " +
+      "takes ~60ms, so re-querying beats being wrong.\n\n" +
       "Typing goes to whatever app is frontmost, and a synthetic click does not activate the " +
       "app it lands on — always pass `app` to type_text and press_key so it activates the " +
-      "target and refuses to type anywhere else.",
+      "target and refuses to type anywhere else. Use method:'paste' for any field with " +
+      "autocomplete or an IME (URL bars, search boxes, file paths): such fields reorder " +
+      "characters between keystrokes and typed text arrives scrambled.",
   }
 );
 

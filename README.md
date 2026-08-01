@@ -44,18 +44,26 @@ So: trigger the picker in the page, `press_key g cmd+shift`, paste the absolute 
 `press_key return`, then `find_elements` for the "Open" button and click it. About three
 actions per upload, no screenshots.
 
-### The correctness argument, which is stronger than the cost one
+### Stale coordinates: the correctness argument, stronger than the cost one
 
-A queued coordinate can go stale between deciding and clicking. Real incident: ticking
-YouTube's first checkbox made a bulk-action toolbar appear, pushing every row down ~64px.
-Queued clicks landed one row off and selected a *private* video, one click from
-publishing it. An element `ref` would have been immune.
+A coordinate can go stale between deciding and clicking, and the click then lands on
+something else silently. Real incident: ticking YouTube's first checkbox made a
+bulk-action toolbar appear, pushing every row down ~64px. Queued clicks landed one row
+off and selected a *private* video, one click from publishing it. An element `ref` would
+have been immune.
 
-**Any UI that inserts or removes chrome on interaction invalidates queued coordinates.**
-Re-query after every state change, and never batch coordinate clicks across an action
-that can reflow the layout. Display changes do the same thing — an external display
-sleeping or a VNC client reconnecting at a different resolution silently moves every
-window.
+That run produced roughly six silent mis-clicks from **three distinct triggers**, which
+matters because they need different fixes:
+
+| trigger | what happens | fix |
+|---|---|---|
+| **Layout reflow** | a page inserts/removes chrome on interaction and everything below shifts | re-query after *every* state change; never batch coordinate clicks across an action that can reflow |
+| **Display geometry change** | an external display sleeps, or a VNC client reconnects at a different resolution, and every window moves | not yet solved — see *Known gaps* |
+| **Occlusion** | a window capture composites the target unobstructed, so a coordinate read off it hits whatever is really on top | `screenshot` now warns, with covered-% and the covering app |
+
+The general rule: **treat a coordinate as valid only for the state you measured it in.**
+`find_elements` is cheap enough (~60ms) that re-querying is almost always better than
+reusing a coordinate across an interaction.
 
 ## What it gives you
 
@@ -201,14 +209,28 @@ during an automated sequence.
 
 ## Text entry
 
-`type_text` sends one key event per character at a 20 ms interval, which measured 13/13
-exact in testing. Smaller intervals occasionally drop characters, and batching several
-characters into a single event corrupts text at the batch boundary — both were measured,
-not assumed.
+**Any field with autocomplete or an IME gets `method: "paste"`, never keystrokes.**
+This is a rule, not a tip. An autocompleting field re-enters and reorders characters
+between keystrokes, so typed text arrives scrambled: `https://github.com/new` became
+`thub.co/gim/new/` in Chrome's omnibox. The same applies to the Open dialog's
+Cmd+Shift+G path field, search boxes, and address fields. A run of 51 uploads used paste
+for every path, title and description and had zero corruption — including paths
+containing `é` and `à`, which per-character typing also puts at risk.
 
-For anything long, use `method: "paste"`: it puts the text on the clipboard, presses
-`cmd+V`, and restores the previous clipboard contents. It is far faster and immune to
-per-character loss.
+Paste puts the text on the clipboard, presses `cmd+V`, and restores the previous
+clipboard contents. It is also far faster for long text.
+
+Keystroke mode sends one key event per character at a 20 ms interval, which measured
+13/13 exact. Smaller intervals occasionally drop characters, and batching several
+characters into a single event corrupts text at the batch boundary — both measured, not
+assumed. Use it for plain fields where you want realistic per-character input.
+
+## Known gaps
+
+- **No geometry generation counter.** A display resolution change silently invalidates
+  every cached coordinate, and a click made against stale geometry fails silently rather
+  than loudly. A generation token that `click` validated against would turn those into
+  visible errors. Not built.
 
 ## Requirements and permissions
 
