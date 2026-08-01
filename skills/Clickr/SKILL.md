@@ -39,17 +39,31 @@ YouTube's first checkbox made a bulk-action toolbar appear, which pushed every r
 away from publishing it. A `ref` in the extension would have been immune.
 
 **Rule: treat a coordinate as valid only for the state you measured it in.** That run
-produced ~6 silent mis-clicks from three distinct triggers:
+produced ~6 silent mis-clicks from three triggers. All three look identical when they
+happen — the click lands somewhere plausible and nothing errors — so you cannot diagnose
+them in the moment, only prevent them:
 
-- **Layout reflow** — a page inserts or removes chrome and everything below shifts.
-  Re-query after every state change; never batch coordinate clicks across an action that
-  can reflow. `find_elements` takes ~60ms, so re-querying is nearly always cheaper than
-  being wrong.
-- **Display geometry change** — an external display sleeping or a VNC client reconnecting
-  at a different resolution moves every window. No automatic protection yet; re-read
-  `list_displays`/`list_windows` if the session is long or the display may have changed.
+- **Layout reflow** — *self-inflicted and deterministic*. Your own click 1 inserts a
+  toolbar, which breaks clicks 2..n of the same batch. The rule is not "re-query often",
+  it is **never batch coordinate clicks across a state-changing action**. Fully avoidable.
+- **Display geometry change** — *external and unpredictable*. A display sleeping or a VNC
+  client reconnecting moves every window, at any moment. Carry the `geometry` token from
+  `list_displays`/`find_elements` into `click` as `expectGeometry`; a mismatch refuses the
+  action instead of clicking whatever moved underneath.
 - **Occlusion** — a window capture composites the target unobstructed, so a coordinate
   read off it can hit whatever is really on top. `screenshot` warns about this.
+
+## Verify every state-changing click
+
+`click` returns `hitElement` — the role, title and state of what it actually hit — and
+`find_elements` costs ~385 tokens. Verification used to mean a ~2000-token screenshot, so
+it got rationed, and the skipped checks were exactly the ones that catch destructive
+mistakes. A near-miss on publishing a private video was caught only because a
+verification screenshot happened to exist.
+
+**The safe habit and the cheap habit are now the same habit.** Check `hitElement` after
+any click that changes state, selects, deletes, or publishes. The instinct to batch and
+hope was a rational response to expensive verification; it no longer is.
 
 ## Use text, not pixels
 

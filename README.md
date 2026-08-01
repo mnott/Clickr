@@ -52,18 +52,37 @@ bulk-action toolbar appear, pushing every row down ~64px. Queued clicks landed o
 off and selected a *private* video, one click from publishing it. An element `ref` would
 have been immune.
 
-That run produced roughly six silent mis-clicks from **three distinct triggers**, which
-matters because they need different fixes:
+That run produced roughly six silent mis-clicks from **three distinct triggers**. They
+need different fixes, and — importantly — they are indistinguishable from each other *at
+the time*. All three present identically: the click lands somewhere plausible but wrong,
+and nothing errors. They were only separated afterwards, by reconstructing what had
+changed between calls.
 
-| trigger | what happens | fix |
+| trigger | cause | fix |
 |---|---|---|
-| **Layout reflow** | a page inserts/removes chrome on interaction and everything below shifts | re-query after *every* state change; never batch coordinate clicks across an action that can reflow |
-| **Display geometry change** | an external display sleeps, or a VNC client reconnects at a different resolution, and every window moves | carry the `geometry` token from `list_displays`/`find_elements` into `click` as `expectGeometry` — a mismatch refuses the action |
-| **Occlusion** | a window capture composites the target unobstructed, so a coordinate read off it hits whatever is really on top | `screenshot` now warns, with covered-% and the covering app |
+| **Layout reflow** | **Self-inflicted and deterministic.** Your own click 1 inserts a toolbar, which breaks clicks 2..n of the same batch. | **Never batch coordinate clicks across a state-changing action.** Not "re-query often" — this one is fully avoidable. |
+| **Display geometry change** | **External and unpredictable.** A monitor sleeps, a VNC client reconnects at a different resolution; every window moves. Can strike at any moment. | Carry the `geometry` token from `list_displays`/`find_elements` into `click` as `expectGeometry`; a mismatch refuses the action. |
+| **Occlusion** | A window capture composites the target unobstructed, so a coordinate read off it hits whatever is really on top. | `screenshot` warns, with covered-% and the covering app. |
+
+The first two are worth keeping apart rather than collapsing into "things move sometimes":
+one is bad luck you can only detect, the other is a mistake you can simply not make.
 
 The general rule: **treat a coordinate as valid only for the state you measured it in.**
-`find_elements` is cheap enough (~60ms) that re-querying is almost always better than
-reusing a coordinate across an interaction.
+
+### Verification is now cheap enough to be unconditional
+
+This is the habit change that matters. Verifying a state-changing click used to mean a
+screenshot at ~2000 tokens, so verification got rationed — and the checks most likely to
+be skipped were exactly the ones that catch destructive mistakes. The private-video
+near-miss above was caught only because a verification screenshot happened to exist.
+
+`click` now returns `hitElement`, and `find_elements` costs ~385 tokens. So:
+
+> **Verify every state-changing click. The safe habit and the cheap habit are now the
+> same habit.**
+
+The old instinct — batch the clicks and hope — was a rational response to expensive
+verification. It no longer is.
 
 ## What it gives you
 

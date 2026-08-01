@@ -35,11 +35,20 @@ const server = new Server(
       "of displays is supported. find_elements, list_windows, list_displays, screenshot and " +
       "click all speak this same space.\n\n" +
       "STALE COORDINATES ARE THE MAIN HAZARD — treat a coordinate as valid only for the " +
-      "state you measured it in. Three things invalidate one silently: a page inserting or " +
-      "removing chrome so everything below shifts, a display resolution change moving every " +
-      "window, and capturing a window that is occluded (the image shows it unobstructed, but " +
-      "the click hits whatever is on top). Re-query after each state change; find_elements " +
-      "takes ~60ms, so re-querying beats being wrong.\n\n" +
+      "state you measured it in. Three things invalidate one silently, and all three look " +
+      "identical when they happen (the click lands somewhere plausible and nothing errors): " +
+      "(a) layout reflow — your own click inserts a toolbar and everything below shifts, " +
+      "which is self-inflicted and fully avoidable: NEVER batch coordinate clicks across a " +
+      "state-changing action; (b) a display resolution change moving every window, which is " +
+      "external and can strike at any moment — carry the `geometry` token from list_displays " +
+      "or find_elements into click as expectGeometry and a mismatch refuses the action; " +
+      "(c) capturing an occluded window, where the image shows it unobstructed but the click " +
+      "hits whatever is on top — screenshot warns about this.\n\n" +
+      "VERIFY EVERY STATE-CHANGING CLICK. click returns hitElement describing what it " +
+      "actually hit, and find_elements costs ~385 tokens, so verification no longer needs a " +
+      "~2000-token screenshot. Check the result of anything that selects, deletes, publishes " +
+      "or otherwise changes state — batching clicks and hoping was a rational response to " +
+      "expensive verification and no longer is.\n\n" +
       "Typing goes to whatever app is frontmost, and a synthetic click does not activate the " +
       "app it lands on — always pass `app` to type_text and press_key so it activates the " +
       "target and refuses to type anywhere else. Use method:'paste' for any field with " +
