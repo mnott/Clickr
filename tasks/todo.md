@@ -1,4 +1,38 @@
+## Continue
+
+> **Last session:** 0008 - 2026-08-01 - Direct Link Following, Mcp Refactoring, And V0.3.0 Release
+> **Paused at:** 2026-08-01T11:22:44.224Z
+>
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr. Check the latest session note for details.
+
+---
 # Clickr — TODO
+
+## Continue (state at 2026-08-01)
+
+Shipped and published: `@tekmidian/clickr@0.3.0` on npm, https://github.com/mnott/Clickr.
+MIT. Registered in `~/.claude.json`; skill installed to `~/.claude/skills/Clickr/`.
+
+**Open:**
+
+1. **Page reflow has no automatic guard.** The `geometry` token covers display changes
+   only. A page inserting a toolbar does not change display geometry, so nothing but
+   discipline (re-query, never batch across a state-changing click) catches it. Possibly
+   unfixable from clickr's side — it is the argument for using the Chrome extension's
+   `ref`s when the target is in a page.
+2. **Custom web UIs may expose nothing to the accessibility tree.** LinkedIn's composer
+   footer returned zero from `find_elements` and resolved only to the containing
+   `AXWebArea`, forcing screenshot-and-measure. Worth checking whether a different AX
+   traversal (e.g. not stopping at `AXWebArea`) would reach those controls.
+3. The README's MIT line landed after the 0.3.0 publish, so the tarball copy is one line
+   behind. Rides along with the next release; no action needed.
+
+**Handed to PAI, awaiting their side:** a data-loss bug in PAI's `mcp.ts` —
+`readClaudeJson()` returns `{}` on a parse error and `writeClaudeJson()` then overwrites,
+so a malformed `~/.claude.json` would be replaced with a config containing only the `pai`
+entry. Also asked PAI to check AIBroker for the same pattern. Clickr guards this by
+throwing on unparseable config and backing up before every write.
+
 
 ## RESOLVED 2026-08-01 — root cause measured, fixes implemented
 
