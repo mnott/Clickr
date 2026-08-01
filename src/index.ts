@@ -16,19 +16,30 @@ const server = new Server(
       "clickr drives this Mac's screen and input devices directly: it captures any display " +
       "region and posts real mouse and keyboard events, so it can operate any application " +
       "without that application exposing a scripting interface.\n\n" +
-      "USE IT AS A FALLBACK, NOT A DEFAULT. In order of preference:\n" +
-      "  1. A real API or CLI (gh, HTTP, writing a file) — most reliable.\n" +
-      "  2. The Chrome extension (mcp__claude-in-chrome__*) for anything inside a web page. " +
-      "It is cheaper AND more correct: it reads pages as text, and addresses elements by ref, " +
-      "which stays bound even when the page reflows.\n" +
-      "  3. macos-automator-mcp (mcp__macos_automator__execute_script) for any app with an " +
-      "AppleScript/JXA dictionary — Finder, Mail, Safari, Terminal and most established Mac " +
-      "apps. It addresses things by name rather than coordinate, so nothing it does goes " +
-      "stale when a window moves; strictly more reliable than clickr wherever it applies.\n" +
-      "  4. clickr, for what none of the above can touch — above all the native macOS " +
-      "Open/Save dialog, which a browser extension cannot cross into and which is not " +
-      "usefully scriptable, plus apps with no scripting dictionary (Electron, games, " +
-      "remote desktop, canvas UIs).\n\n" +
+      "FIRST ASK: is the visible interaction itself what the user wants? If they asked to " +
+      "be shown something — 'show me how to do a pivot table in Excel', 'walk me through " +
+      "this dialog' — use clickr directly. Watching it happen is the deliverable, and doing " +
+      "it headlessly with a script misses the point entirely.\n\n" +
+      "OTHERWISE USE IT AS A FALLBACK. The ordering is NOT mainly about tokens — it is about " +
+      "whether the user can keep working. clickr moves the real pointer and types on the " +
+      "real keyboard, so the machine is yours for the duration: the user cannot touch it " +
+      "without corrupting the automation, and concurrent human input measurably causes " +
+      "dropped characters and misdirected clicks. Prefer, in order:\n" +
+      "  1. A real API or CLI (gh, HTTP, writing a file) — headless, takes nothing.\n" +
+      "  2. macos-automator-mcp (mcp__macos_automator__execute_script) using an app's " +
+      "AppleScript/JXA DICTIONARY — the app works internally, the pointer never moves, and " +
+      "it addresses things by name so nothing goes stale when a window moves.\n" +
+      "  3. The Chrome extension (mcp__claude-in-chrome__*) for anything in a web page — " +
+      "costs the user only a browser tab, reads pages as text, and uses refs that survive " +
+      "reflow.\n" +
+      "  4. clickr, and AppleScript UI SCRIPTING via System Events — both seize the pointer " +
+      "and keyboard. Note the split: a dictionary script is tier 2 and free, while System " +
+      "Events keystroke/click synthesises the same events clickr does and is tier 4. " +
+      "clickr's own niche is the native macOS Open/Save dialog (unreachable from a browser " +
+      "extension and not usefully scriptable) and apps with no dictionary — Electron, games, " +
+      "remote desktop, canvas UIs.\n\n" +
+      "WHEN YOU DO TAKE OVER, TELL THE USER FIRST — roughly how long, and to keep hands off " +
+      "the mouse and keyboard until you say you are done. They cannot know otherwise.\n\n" +
       "PREFER TEXT OVER PIXELS. A screenshot costs about (width*height)/750 tokens and stays " +
       "in the conversation, so it is re-sent every later turn; 30 full-screen captures means " +
       "~54k tokens carried by every subsequent request. Use find_elements to locate controls " +

@@ -54,22 +54,50 @@ They must grant them in System Settings → Privacy & Security and then **fully 
 reopen** that application. If a later `activate_app` prompts for **Automation**, that is
 the AppleScript activation fallback and is expected.
 
-## Choose the right tool first
+## Choosing how to drive the computer
 
-Clickr is the fallback, not the default. In order:
+Ask one question first, because it overrides the whole ordering below:
 
-1. **A real API or CLI.** If the job can be done with `gh`, an HTTP call, or a file write,
-   do that. No UI automation is more reliable than not needing it.
-2. **The Chrome extension** (`mcp__claude-in-chrome__*`) for anything inside a web page.
-   It is cheaper *and more correct* than clickr: it reads pages as text, and it addresses
-   elements by `ref`, which stays bound to the element even when the page reflows.
-3. **macos-automator-mcp** (`mcp__macos_automator__execute_script`) for any app with an
-   AppleScript or JXA dictionary — Finder, Mail, Safari, Terminal, DEVONthink and most
-   established Mac apps. It drives apps through their own scripting interface, addressing
-   things by name rather than coordinate, so nothing it does can go stale when a window
-   moves. Strictly more reliable than clickr wherever it applies. Its
-   `get_scripting_tips` tool will tell you whether a given app is covered.
-4. **Clickr**, for what none of the above can touch.
+### Is the visible interaction itself the deliverable?
+
+If the user wants to *watch* — "show me how to do a pivot table in Excel", "walk me
+through this dialog", "demonstrate the export settings" — then **go straight to clickr**.
+The point is that they see it happen on their screen. Doing it headlessly with a script
+produces the right end state and completely misses what was asked for.
+
+Otherwise, the goal is the end state, and you should take as little of the user's machine
+as possible to get there.
+
+### Otherwise: use the least invasive tool that can do the job
+
+The ordering is not mainly about tokens. It is about **whether the user can keep working
+while you do it**. Clickr moves the real pointer and types on the real keyboard, so the
+machine is *yours* for the duration — the user cannot type an email or click anything
+without corrupting what you are doing, and vice versa. That is a genuine cost to them,
+and it is the main reason clickr goes last.
+
+| | tool | what it takes from the user |
+|---|---|---|
+| 1 | **API / CLI / file edits** — `gh`, HTTP, writing a file | Nothing. Headless. Always prefer this. |
+| 2 | **macos-automator-mcp** (`mcp__macos_automator__execute_script`) using an app's **AppleScript/JXA dictionary** | Nothing. The app does the work internally; the pointer never moves. Also immune to windows moving, since it addresses things by name. |
+| 3 | **The Chrome extension** (`mcp__claude-in-chrome__*`) | A browser tab. The user keeps the pointer, keyboard, and every other app. Also cheaper and more correct than clickr — text not images, and `ref`s survive reflow. |
+| 4 | **Clickr**, and **AppleScript UI scripting** (`System Events` keystroke/click) | The whole machine. Pointer and keyboard are seized; the user must stop working. |
+
+Note that AppleScript is split across tiers 2 and 4. A *dictionary* script (`tell
+application "Finder" to duplicate file x`) is tier 2 and costs the user nothing. *UI
+scripting* through System Events synthesises the same events clickr does and belongs in
+tier 4 — do not treat "it's AppleScript" as automatically non-invasive.
+`get_scripting_tips` will tell you whether an app has a real dictionary.
+
+### When you do take over the machine
+
+Say so before you start, and give a rough duration: *"This will drive your screen for
+about a minute — please don't use the mouse or keyboard until I say it's done."* Then say
+when you are finished.
+
+This is not politeness. Concurrent human input corrupts automation in both directions:
+measured, it produces dropped characters and clicks landing on the wrong element. The
+user cannot know to keep their hands off unless you tell them.
 
 ### What clickr is actually needed for
 

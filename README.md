@@ -85,22 +85,37 @@ If you would rather not run the installer, add this to `mcpServers` in `~/.claud
 ## Use it as a fallback, not a default
 
 Clickr can drive anything, which is exactly why it should not be your first choice.
-In order of preference:
 
-1. **A real API or CLI** — `gh`, an HTTP call, writing a file. No UI automation beats not
-   needing it.
-2. **The [Claude in Chrome extension](https://claude.com/chrome)** for anything inside a
-   web page. It is cheaper *and more correct* than clickr: it reads pages as text rather
-   than images, and addresses elements by `ref`, which stays bound to the element even
-   when the page reflows.
-3. **[macos-automator-mcp](https://github.com/steipete/macos-automator-mcp)**
-   (`@steipete/macos-automator-mcp`) for any app with an AppleScript or JXA dictionary.
-   This one is worth reaching for deliberately: it drives apps through their own scripting
-   interface, so it addresses things by *name* — "the third message of the front mailbox"
-   — rather than by coordinate. Nothing about it can go stale when a window moves, which
-   makes it strictly more reliable than clickr wherever it applies. Finder, Mail, Safari,
-   Terminal, OmniFocus, DEVONthink and most established Mac apps are scriptable.
-4. **Clickr**, for what none of the above can touch.
+**The deciding question is not cost — it is whether the user can keep working.** Clickr
+moves the real pointer and types on the real keyboard, so for the duration the machine is
+the agent's, not the user's. They cannot answer an email or click anything without
+corrupting the automation, and vice versa: concurrent human input measurably produces
+dropped characters and clicks landing on the wrong element. Everything above clickr in
+this list leaves the user's hands free.
+
+| | tool | what it takes from the user |
+|---|---|---|
+| 1 | **API / CLI / file edits** — `gh`, HTTP, writing a file | Nothing. Headless. |
+| 2 | **[macos-automator-mcp](https://github.com/steipete/macos-automator-mcp)** using an app's **AppleScript/JXA dictionary** | Nothing. The app does the work internally and the pointer never moves. Also immune to windows moving, since it addresses things by name — "the third message of the front mailbox" — rather than by coordinate. Finder, Mail, Safari, Terminal, DEVONthink and most established Mac apps qualify. |
+| 3 | **[Claude in Chrome](https://claude.com/chrome)** | A browser tab. Pointer, keyboard and every other app stay with the user. Also cheaper and more correct than clickr: text rather than images, and `ref`s that survive reflow. |
+| 4 | **Clickr**, and **AppleScript UI scripting** (`System Events` keystroke/click) | The whole machine. The user must stop working. |
+
+AppleScript spans tiers 2 and 4, and the difference matters: a *dictionary* script costs
+the user nothing, while *UI scripting* through System Events synthesises exactly the
+events clickr does and is just as exclusive. "It's AppleScript" does not mean
+"non-invasive".
+
+### The exception: when being watched is the point
+
+If the user wants to *see* it — "show me how to do a pivot table in Excel", "walk me
+through this dialog" — go straight to clickr. The visible interaction is the deliverable,
+and doing it headlessly with a script produces the right end state while missing what was
+actually asked for.
+
+### And when you do take over
+
+Say so first, with a rough duration, and say when you are done. The user cannot know to
+keep their hands off unless they are told.
 
 ### What clickr is genuinely needed for
 
