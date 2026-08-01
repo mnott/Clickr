@@ -147,6 +147,22 @@ verification screenshot happened to exist.
 any click that changes state, selects, deletes, or publishes. The instinct to batch and
 hope was a rational response to expensive verification; it no longer is.
 
+### Take the direct link when the app offers one
+
+After creating something, apps usually offer a way straight to it — "View post", "Show in
+Finder", "Open file", "Go to record". **Follow it instead of dismissing the dialog and
+hunting for the object in a list.**
+
+This is not a shortcut, it is error elimination. Navigating directly means you are
+operating on the thing you just created, by construction. Finding it in a list means
+identifying the right row among near-identical ones — and picking the wrong row is the
+single most damaging mistake available in UI automation.
+
+Real example: after publishing a post, the success dialog offered "View post". Dismissing
+it meant returning to a feed with two identical "Comment" buttons, and needing a
+screenshot to confirm which post was the right one before commenting. Following the link
+would have led straight to the correct comment box with nothing to disambiguate.
+
 ## Use text, not pixels
 
 A screenshot costs roughly `width * height / 750` tokens **and stays in the conversation,

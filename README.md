@@ -184,6 +184,18 @@ near-miss above was caught only because a verification screenshot happened to ex
 The old instinct — batch the clicks and hope — was a rational response to expensive
 verification. It no longer is.
 
+### Take the direct link when the app offers one
+
+After creating something, apps offer a route straight to it — "View post", "Show in
+Finder", "Open", "Go to record". Follow it rather than dismissing the dialog and hunting
+for the object in a list.
+
+This is error elimination, not a shortcut: navigating directly means you are operating on
+the thing you just created, *by construction*. Finding it in a list means identifying the
+right row among near-identical ones, and picking the wrong row is the most damaging
+mistake available in UI automation — it is the same failure that nearly published the
+private video above.
+
 ## What it gives you
 
 - **Measure** — screenshot a display, a region, or a single window, with an optional

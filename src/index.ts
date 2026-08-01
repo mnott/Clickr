@@ -65,6 +65,12 @@ const server = new Server(
       "~2000-token screenshot. Check the result of anything that selects, deletes, publishes " +
       "or otherwise changes state — batching clicks and hoping was a rational response to " +
       "expensive verification and no longer is.\n\n" +
+      "TAKE THE DIRECT LINK WHEN THE APP OFFERS ONE. After creating something, apps offer a " +
+      "way straight to it — 'View post', 'Show in Finder', 'Open', 'Go to record'. Follow it " +
+      "rather than dismissing the dialog and hunting for the object in a list. Navigating " +
+      "directly means you are acting on the thing you just created, by construction; finding " +
+      "it in a list means identifying the right row among near-identical ones, and picking " +
+      "the wrong row is the most damaging mistake available in UI automation.\n\n" +
       "Typing goes to whatever app is frontmost, and a synthetic click does not activate the " +
       "app it lands on — always pass `app` to type_text and press_key so it activates the " +
       "target and refuses to type anywhere else. Use method:'paste' for any field with " +
