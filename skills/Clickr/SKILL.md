@@ -9,27 +9,70 @@ Clickr posts real mouse and keyboard events and reads the screen, so it can driv
 application without that application exposing an API. That power is also why it should
 not be your first choice.
 
+## Installing clickr
+
+When asked to install clickr — "download github.com/mnott/clickr and install it" or
+similar — run this, from any directory the user is happy to keep a checkout in:
+
+```bash
+git clone https://github.com/mnott/Clickr.git
+cd Clickr
+npm install          # the prepare script builds the Swift helper and the TS server
+node dist/cli.js install
+```
+
+`install` builds the native helper if missing, registers the MCP server in
+`~/.claude.json` (backing that file up to `~/.claude.json.bak-clickr` first), installs
+this skill to `~/.claude/skills/Clickr/`, and prints permission status. It is idempotent —
+running it again just updates the registration.
+
+Then **tell the user to restart Claude Code**; the tools do not appear until they do.
+You cannot pick them up in your own session either.
+
+Other commands: `node dist/cli.js status` (what is registered, which permissions),
+`doctor` (toolchain, helper, displays), `uninstall` (deregister).
+
+**Requirements:** macOS, Node 18+, Xcode Command Line Tools for `swiftc`
+(`xcode-select --install`). `doctor` reports what is missing.
+
+**Permissions — explain this, it confuses people.** Clickr needs **Accessibility** (to
+click and type) and **Screen Recording** (to capture and read window titles). Both are
+granted to *the app that launches the MCP server* — the user's terminal, or the Claude
+app — **not to clickr**, which is why nothing called "clickr" appears in System Settings.
+They must grant them in System Settings → Privacy & Security and then **fully quit and
+reopen** that application. If a later `activate_app` prompts for **Automation**, that is
+the AppleScript activation fallback and is expected.
+
 ## Choose the right tool first
 
 Clickr is the fallback, not the default. In order:
 
-1. **A real API or CLI.** If the job can be done with `gh`, an HTTP call, AppleScript,
-   or a file write, do that. No UI automation is more reliable than not needing it.
+1. **A real API or CLI.** If the job can be done with `gh`, an HTTP call, or a file write,
+   do that. No UI automation is more reliable than not needing it.
 2. **The Chrome extension** (`mcp__claude-in-chrome__*`) for anything inside a web page.
    It is cheaper *and more correct* than clickr: it reads pages as text, and it addresses
    elements by `ref`, which stays bound to the element even when the page reflows.
-3. **A macOS computer-use MCP**, if one is installed and can reach the target.
-4. **Clickr**, for what the others cannot touch.
+3. **macos-automator-mcp** (`mcp__macos_automator__execute_script`) for any app with an
+   AppleScript or JXA dictionary — Finder, Mail, Safari, Terminal, DEVONthink and most
+   established Mac apps. It drives apps through their own scripting interface, addressing
+   things by name rather than coordinate, so nothing it does can go stale when a window
+   moves. Strictly more reliable than clickr wherever it applies. Its
+   `get_scripting_tips` tool will tell you whether a given app is covered.
+4. **Clickr**, for what none of the above can touch.
 
 ### What clickr is actually needed for
 
 Measured, not assumed — from a session that drove ~51 YouTube uploads:
 
 - **The native macOS Open/Save dialog.** The browser extension cannot cross out of the
-  page into a native window. This is the main reason clickr exists.
-- Non-browser desktop applications with no scripting interface.
+  page into a native window, and the dialog exposes no useful AppleScript surface either.
+  This is the main reason clickr exists.
+- **Apps with no scripting dictionary** — Electron apps, games, remote-desktop sessions,
+  anything drawing its own UI in a canvas.
 
-Everything else in that run was better done by the Chrome extension.
+Everything else in that run was better done by the Chrome extension. If the app *is*
+scriptable, prefer macos-automator-mcp: "click the button named Export" cannot be broken
+by a window moving; a coordinate can.
 
 ### The correctness argument for using refs where you can
 
@@ -123,20 +166,14 @@ safe path for text containing accented or non-Latin characters.
 **Do not use the keyboard or mouse while clickr is driving** — concurrent input causes
 dropped characters and misdirected clicks.
 
-## Install
+## Troubleshooting
 
-```bash
-git clone https://github.com/mnott/Clickr.git
-cd Clickr
-npm install && npm run build
-node dist/cli.js install
-```
-
-`install` builds the native helper, registers the MCP server in `~/.claude.json`
-(backing it up first), installs this skill, and reports permission status.
-Then **restart Claude Code**.
-
-Clickr needs **Accessibility** (to click and type) and **Screen Recording** (to capture
-and to read window titles). Both are granted to the app that *launches* the server — the
-terminal or the Claude app — not to clickr itself: System Settings → Privacy & Security.
-`node dist/cli.js doctor` diagnoses a broken install.
+- **Tools missing after install** — Claude Code was not restarted.
+- **Clicks or typing do nothing** — Accessibility not granted, or the granting app was
+  reloaded rather than fully quit and reopened. Check with `check_permissions`.
+- **Screenshots fail, or window titles come back empty** — Screen Recording not granted.
+- **Text arrives scrambled** — an autocompleting field; use `method: "paste"`.
+- **Typing goes to the wrong app** — pass `app` to `type_text`/`press_key`.
+- **A click lands on the wrong thing** — the coordinate went stale. See the three
+  triggers above; re-query with `find_elements` rather than reusing coordinates.
+- **`swiftc` not found** — `xcode-select --install`.

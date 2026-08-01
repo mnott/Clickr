@@ -17,13 +17,18 @@ const server = new Server(
       "region and posts real mouse and keyboard events, so it can operate any application " +
       "without that application exposing a scripting interface.\n\n" +
       "USE IT AS A FALLBACK, NOT A DEFAULT. In order of preference:\n" +
-      "  1. A real API or CLI (gh, HTTP, AppleScript, writing a file) — most reliable.\n" +
+      "  1. A real API or CLI (gh, HTTP, writing a file) — most reliable.\n" +
       "  2. The Chrome extension (mcp__claude-in-chrome__*) for anything inside a web page. " +
       "It is cheaper AND more correct: it reads pages as text, and addresses elements by ref, " +
       "which stays bound even when the page reflows.\n" +
-      "  3. A macOS computer-use MCP, if installed and able to reach the target.\n" +
-      "  4. clickr, for what the others cannot touch — above all the native macOS Open/Save " +
-      "dialog, which a browser extension cannot cross into, and non-browser desktop apps.\n\n" +
+      "  3. macos-automator-mcp (mcp__macos_automator__execute_script) for any app with an " +
+      "AppleScript/JXA dictionary — Finder, Mail, Safari, Terminal and most established Mac " +
+      "apps. It addresses things by name rather than coordinate, so nothing it does goes " +
+      "stale when a window moves; strictly more reliable than clickr wherever it applies.\n" +
+      "  4. clickr, for what none of the above can touch — above all the native macOS " +
+      "Open/Save dialog, which a browser extension cannot cross into and which is not " +
+      "usefully scriptable, plus apps with no scripting dictionary (Electron, games, " +
+      "remote desktop, canvas UIs).\n\n" +
       "PREFER TEXT OVER PIXELS. A screenshot costs about (width*height)/750 tokens and stays " +
       "in the conversation, so it is re-sent every later turn; 30 full-screen captures means " +
       "~54k tokens carried by every subsequent request. Use find_elements to locate controls " +

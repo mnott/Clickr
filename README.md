@@ -8,29 +8,97 @@ whether an app exposes AppleScript, an accessibility tree, or an API. If you can
 and click it, clickr can drive it. This is deliberately general-purpose: the point is
 instrumentation of *any* app, not a curated set of supported ones.
 
+## Install
+
+```bash
+git clone https://github.com/mnott/Clickr.git
+cd Clickr
+npm install          # also builds: the Swift helper and the TypeScript server
+node dist/cli.js install
+```
+
+Then **restart Claude Code**.
+
+`install` does four things: builds the native Swift helper if missing, registers the MCP
+server in `~/.claude.json` (backing that file up first), installs the Claude Code skill
+to `~/.claude/skills/Clickr/`, and reports permission status.
+
+| command | |
+|---|---|
+| `clickr install` | build, register, install the skill, check permissions |
+| `clickr status` | what is registered and which permissions are granted |
+| `clickr doctor` | diagnose a broken install — toolchain, helper, displays |
+| `clickr uninstall` | remove the registration |
+
+If you have this repo checked out already, `node dist/cli.js install` is the only step
+you need; `npm install` runs the build via the `prepare` script.
+
+### Requirements
+
+macOS, Node 18+, and the Xcode Command Line Tools for `swiftc` (`xcode-select --install`).
+`clickr doctor` tells you if any of that is missing.
+
+### Permissions — the part that trips people up
+
+Two are required, and **they are granted to the application that launches the MCP
+server** — your terminal (iTerm2, Terminal) or the Claude app — **not to clickr itself**.
+This is why granting them "to clickr" is impossible and why nothing appears under that
+name in System Settings.
+
+- **Accessibility** — to post clicks and keystrokes.
+- **Screen Recording** — to capture screenshots and to read window titles.
+
+Grant both in System Settings → Privacy & Security, then **fully quit and reopen** that
+application; a reload is not enough. `clickr status` and the `check_permissions` tool both
+report current state. Activating an app may additionally prompt once for **Automation**,
+if the AppleScript fallback is reached.
+
+### Registering by hand
+
+If you would rather not run the installer, add this to `mcpServers` in `~/.claude.json`:
+
+```json
+"clickr": {
+  "type": "stdio",
+  "command": "node",
+  "args": ["/absolute/path/to/Clickr/dist/index.js"]
+}
+```
+
 ## Use it as a fallback, not a default
 
 Clickr can drive anything, which is exactly why it should not be your first choice.
 In order of preference:
 
-1. **A real API or CLI** — `gh`, an HTTP call, AppleScript, writing a file. No UI
-   automation beats not needing it.
+1. **A real API or CLI** — `gh`, an HTTP call, writing a file. No UI automation beats not
+   needing it.
 2. **The [Claude in Chrome extension](https://claude.com/chrome)** for anything inside a
    web page. It is cheaper *and more correct* than clickr: it reads pages as text rather
    than images, and addresses elements by `ref`, which stays bound to the element even
    when the page reflows.
-3. **A macOS computer-use MCP**, if one is installed and can reach the target.
-4. **Clickr**, for what the others cannot touch.
+3. **[macos-automator-mcp](https://github.com/steipete/macos-automator-mcp)**
+   (`@steipete/macos-automator-mcp`) for any app with an AppleScript or JXA dictionary.
+   This one is worth reaching for deliberately: it drives apps through their own scripting
+   interface, so it addresses things by *name* — "the third message of the front mailbox"
+   — rather than by coordinate. Nothing about it can go stale when a window moves, which
+   makes it strictly more reliable than clickr wherever it applies. Finder, Mail, Safari,
+   Terminal, OmniFocus, DEVONthink and most established Mac apps are scriptable.
+4. **Clickr**, for what none of the above can touch.
 
 ### What clickr is genuinely needed for
 
 Measured across a session that drove ~51 YouTube uploads end to end:
 
 - **The native macOS Open/Save dialog.** A browser extension cannot cross out of the page
-  into a native window. This is the main reason clickr exists.
-- Non-browser desktop applications with no scripting interface.
+  into a native window, and the dialog is not meaningfully scriptable either — it belongs
+  to the app that raised it and exposes no useful AppleScript surface. This is the main
+  reason clickr exists.
+- **Apps with no scripting dictionary** — Electron apps, games, remote-desktop sessions,
+  and anything drawing its own UI in a canvas.
 
-Everything else in that run was better served by the Chrome extension.
+Everything else in that run was better served by the Chrome extension. If an app *is*
+scriptable, use macos-automator-mcp instead: a script that says "click the button named
+Export" cannot be broken by a window moving, and a coordinate can.
 
 The whole native-dialog flow is capture-free — every control is queryable by role and
 title, verified against TextEdit's Open dialog:
@@ -259,50 +327,6 @@ probably points at something else. Re-read list_displays and re-locate the targe
 
 This covers the display-geometry trigger only. Layout reflow inside a page does not
 change display geometry, so nothing but re-querying protects against that one.
-
-## Requirements and permissions
-
-macOS with the Xcode Command Line Tools (for `swiftc`) and Node 18+.
-
-Two permissions are needed, and they are granted to **the application that launches the
-MCP server** — your terminal, or the Claude app — not to clickr itself:
-
-- **Accessibility** — to post clicks and keystrokes.
-- **Screen Recording** — to capture screenshots and read window titles.
-
-Grant them in System Settings → Privacy & Security, then fully quit and reopen that
-application. Run `check_permissions` to see current status. Activating an app may
-additionally prompt once for **Automation** if the AppleScript fallback is reached.
-
-## Install
-
-```bash
-git clone https://github.com/mnott/Clickr.git
-cd Clickr
-npm install && npm run build
-node dist/cli.js install
-```
-
-`install` builds the native Swift helper, registers the MCP server in `~/.claude.json`
-(backing the file up first), installs the Claude Code skill to
-`~/.claude/skills/Clickr/`, and reports permission status. Then **restart Claude Code**.
-
-| command | |
-|---|---|
-| `clickr install` | build, register, install the skill, check permissions |
-| `clickr status` | what is registered and which permissions are granted |
-| `clickr doctor` | diagnose a broken install (toolchain, helper, displays) |
-| `clickr uninstall` | remove the registration |
-
-To register by hand instead, add to `mcpServers` in `~/.claude.json`:
-
-```json
-"clickr": {
-  "type": "stdio",
-  "command": "node",
-  "args": ["/absolute/path/to/Clickr/dist/index.js"]
-}
-```
 
 ## Tests
 
