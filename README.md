@@ -8,6 +8,55 @@ whether an app exposes AppleScript, an accessibility tree, or an API. If you can
 and click it, clickr can drive it. This is deliberately general-purpose: the point is
 instrumentation of *any* app, not a curated set of supported ones.
 
+## Use it as a fallback, not a default
+
+Clickr can drive anything, which is exactly why it should not be your first choice.
+In order of preference:
+
+1. **A real API or CLI** — `gh`, an HTTP call, AppleScript, writing a file. No UI
+   automation beats not needing it.
+2. **The [Claude in Chrome extension](https://claude.com/chrome)** for anything inside a
+   web page. It is cheaper *and more correct* than clickr: it reads pages as text rather
+   than images, and addresses elements by `ref`, which stays bound to the element even
+   when the page reflows.
+3. **A macOS computer-use MCP**, if one is installed and can reach the target.
+4. **Clickr**, for what the others cannot touch.
+
+### What clickr is genuinely needed for
+
+Measured across a session that drove ~51 YouTube uploads end to end:
+
+- **The native macOS Open/Save dialog.** A browser extension cannot cross out of the page
+  into a native window. This is the main reason clickr exists.
+- Non-browser desktop applications with no scripting interface.
+
+Everything else in that run was better served by the Chrome extension.
+
+The whole native-dialog flow is capture-free — every control is queryable by role and
+title, verified against TextEdit's Open dialog:
+
+```
+AXButton "Open"    @(1645,744)     AXButton "Cancel"  @(1563,744)
+AXPopUpButton "Where:"             AXTextField focused=true  (the Cmd+Shift+G path field)
+```
+
+So: trigger the picker in the page, `press_key g cmd+shift`, paste the absolute path,
+`press_key return`, then `find_elements` for the "Open" button and click it. About three
+actions per upload, no screenshots.
+
+### The correctness argument, which is stronger than the cost one
+
+A queued coordinate can go stale between deciding and clicking. Real incident: ticking
+YouTube's first checkbox made a bulk-action toolbar appear, pushing every row down ~64px.
+Queued clicks landed one row off and selected a *private* video, one click from
+publishing it. An element `ref` would have been immune.
+
+**Any UI that inserts or removes chrome on interaction invalidates queued coordinates.**
+Re-query after every state change, and never batch coordinate clicks across an action
+that can reflow the layout. Display changes do the same thing — an external display
+sleeping or a VNC client reconnecting at a different resolution silently moves every
+window.
+
 ## What it gives you
 
 - **Measure** — screenshot a display, a region, or a single window, with an optional
@@ -178,17 +227,30 @@ additionally prompt once for **Automation** if the AppleScript fallback is reach
 ## Install
 
 ```bash
-npm install
-npm run build      # compiles the Swift helper, then the TypeScript
+git clone https://github.com/mnott/Clickr.git
+cd Clickr
+npm install && npm run build
+node dist/cli.js install
 ```
 
-Register it with Claude Code in `~/.claude.json` under `mcpServers`:
+`install` builds the native Swift helper, registers the MCP server in `~/.claude.json`
+(backing the file up first), installs the Claude Code skill to
+`~/.claude/skills/Clickr/`, and reports permission status. Then **restart Claude Code**.
+
+| command | |
+|---|---|
+| `clickr install` | build, register, install the skill, check permissions |
+| `clickr status` | what is registered and which permissions are granted |
+| `clickr doctor` | diagnose a broken install (toolchain, helper, displays) |
+| `clickr uninstall` | remove the registration |
+
+To register by hand instead, add to `mcpServers` in `~/.claude.json`:
 
 ```json
 "clickr": {
   "type": "stdio",
   "command": "node",
-  "args": ["/absolute/path/to/clickr/dist/index.js"]
+  "args": ["/absolute/path/to/Clickr/dist/index.js"]
 }
 ```
 

@@ -16,14 +16,31 @@ const server = new Server(
       "clickr drives this Mac's screen and input devices directly: it captures any display " +
       "region and posts real mouse and keyboard events, so it can operate any application " +
       "without that application exposing a scripting interface.\n\n" +
-      "All coordinates are GLOBAL POINTS: origin at the top-left of the main display, +y down. " +
-      "Displays arranged left of or above the main display have negative coordinates, and any " +
-      "number of displays is supported. The coordinates reported by screenshot, list_windows " +
-      "and list_displays are the same ones click and drag accept.\n\n" +
-      "Typical loop: list_displays or list_windows to find the target, screenshot (with " +
-      "grid: true) to see and measure it, click to focus a field, then type_text. " +
-      "When a target is small, screenshot a region of 1400 points or less around it — those " +
-      "come back at exactly one image pixel per point, so measurement is exact.",
+      "USE IT AS A FALLBACK, NOT A DEFAULT. In order of preference:\n" +
+      "  1. A real API or CLI (gh, HTTP, AppleScript, writing a file) — most reliable.\n" +
+      "  2. The Chrome extension (mcp__claude-in-chrome__*) for anything inside a web page. " +
+      "It is cheaper AND more correct: it reads pages as text, and addresses elements by ref, " +
+      "which stays bound even when the page reflows.\n" +
+      "  3. A macOS computer-use MCP, if installed and able to reach the target.\n" +
+      "  4. clickr, for what the others cannot touch — above all the native macOS Open/Save " +
+      "dialog, which a browser extension cannot cross into, and non-browser desktop apps.\n\n" +
+      "PREFER TEXT OVER PIXELS. A screenshot costs about (width*height)/750 tokens and stays " +
+      "in the conversation, so it is re-sent every later turn; 30 full-screen captures means " +
+      "~54k tokens carried by every subsequent request. Use find_elements to locate controls " +
+      "by role/title and get exact click coordinates as text (~10x cheaper and exact), " +
+      "read_text for on-device OCR with no image, and note that click already reports the " +
+      "element it hit so verification rarely needs a capture.\n\n" +
+      "COORDINATES ARE GLOBAL POINTS: origin at the top-left of the main display, +y down. " +
+      "Displays left of or above the main display have negative coordinates, and any number " +
+      "of displays is supported. find_elements, list_windows, list_displays, screenshot and " +
+      "click all speak this same space.\n\n" +
+      "STALE COORDINATES ARE THE MAIN HAZARD. Any UI that inserts or removes chrome on " +
+      "interaction shifts everything below it, and a display resolution change moves every " +
+      "window. Re-query after each state change; never batch coordinate clicks across an " +
+      "action that can reflow the layout.\n\n" +
+      "Typing goes to whatever app is frontmost, and a synthetic click does not activate the " +
+      "app it lands on — always pass `app` to type_text and press_key so it activates the " +
+      "target and refuses to type anywhere else.",
   }
 );
 

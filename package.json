@@ -5,11 +5,13 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "clickr": "dist/index.js"
+    "clickr": "dist/cli.js",
+    "clickr-mcp": "dist/index.js"
   },
   "files": [
     "dist",
     "native",
+    "skills",
     "scripts/build-native.sh",
     "README.md",
     "LICENSE"
