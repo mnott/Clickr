@@ -144,57 +144,23 @@ So: trigger the picker in the page, `press_key g cmd+shift`, paste the absolute 
 `press_key return`, then `find_elements` for the "Open" button and click it. About three
 actions per upload, no screenshots.
 
-### Stale coordinates: the correctness argument, stronger than the cost one
+### Why coordinates are the risky part
 
-A coordinate can go stale between deciding and clicking, and the click then lands on
-something else silently. Real incident: ticking YouTube's first checkbox made a
-bulk-action toolbar appear, pushing every row down ~64px. Queued clicks landed one row
-off and selected a *private* video, one click from publishing it. An element `ref` would
-have been immune.
+A coordinate can go stale between being measured and being clicked, and the click then
+lands on something else with nothing reporting an error. In one migration run this
+produced about six silent mis-clicks from three different triggers — a page inserting a
+toolbar and shifting every row down, a display changing resolution and moving every
+window, and a window capture showing content that was really hidden behind another
+window. All three look identical when they happen.
 
-That run produced roughly six silent mis-clicks from **three distinct triggers**. They
-need different fixes, and — importantly — they are indistinguishable from each other *at
-the time*. All three present identically: the click lands somewhere plausible but wrong,
-and nothing errors. They were only separated afterwards, by reconstructing what had
-changed between calls.
+The worst near-miss: ticking a checkbox made a bulk-action toolbar appear, pushing rows
+down ~64px, so queued clicks landed one row off and selected a *private* video — one
+click from publishing it.
 
-| trigger | cause | fix |
-|---|---|---|
-| **Layout reflow** | **Self-inflicted and deterministic.** Your own click 1 inserts a toolbar, which breaks clicks 2..n of the same batch. | **Never batch coordinate clicks across a state-changing action.** Not "re-query often" — this one is fully avoidable. |
-| **Display geometry change** | **External and unpredictable.** A monitor sleeps, a VNC client reconnects at a different resolution; every window moves. Can strike at any moment. | Carry the `geometry` token from `list_displays`/`find_elements` into `click` as `expectGeometry`; a mismatch refuses the action. |
-| **Occlusion** | A window capture composites the target unobstructed, so a coordinate read off it hits whatever is really on top. | `screenshot` warns, with covered-% and the covering app. |
-
-The first two are worth keeping apart rather than collapsing into "things move sometimes":
-one is bad luck you can only detect, the other is a mistake you can simply not make.
-
-The general rule: **treat a coordinate as valid only for the state you measured it in.**
-
-### Verification is now cheap enough to be unconditional
-
-This is the habit change that matters. Verifying a state-changing click used to mean a
-screenshot at ~2000 tokens, so verification got rationed — and the checks most likely to
-be skipped were exactly the ones that catch destructive mistakes. The private-video
-near-miss above was caught only because a verification screenshot happened to exist.
-
-`click` now returns `hitElement`, and `find_elements` costs ~385 tokens. So:
-
-> **Verify every state-changing click. The safe habit and the cheap habit are now the
-> same habit.**
-
-The old instinct — batch the clicks and hope — was a rational response to expensive
-verification. It no longer is.
-
-### Take the direct link when the app offers one
-
-After creating something, apps offer a route straight to it — "View post", "Show in
-Finder", "Open", "Go to record". Follow it rather than dismissing the dialog and hunting
-for the object in a list.
-
-This is error elimination, not a shortcut: navigating directly means you are operating on
-the thing you just created, *by construction*. Finding it in a list means identifying the
-right row among near-identical ones, and picking the wrong row is the most damaging
-mistake available in UI automation — it is the same failure that nearly published the
-private video above.
+Clickr's guards against this are documented under
+[Guarding against stale coordinates](#guarding-against-stale-coordinates); the
+operating discipline that goes with them lives in the agent instructions rather than
+here (see [How the agent is instructed](#how-the-agent-is-instructed)).
 
 ## What it gives you
 
@@ -240,42 +206,36 @@ For fiddly targets, screenshot a small region around the element rather than the
 screen. Passing `grid: true` overlays labelled global coordinates directly on the image,
 so a click target can be read off by eye.
 
-## Cost: prefer text over pixels
+## Why it reads the screen as text
 
-This matters more than anything else in this README. An image costs roughly
-`width * height / 750` tokens **and stays in the conversation**, so it is re-sent on
-every following turn. Cost is cumulative, not per-screenshot:
+Screenshots are the expensive way to look at a screen, and the expense compounds. An
+image costs roughly `width * height / 750` tokens **and stays in the conversation**, so
+it is re-sent on every following turn — 30 full-display captures means ~54k tokens
+carried by every subsequent request, and 120 means ~216k. A long automation run ends up
+dominated by the screenshots it took near the *start*. An overnight run of ~51 web
+uploads accumulated an estimated 180–270k tokens of resident images.
 
-| full-display screenshots | tokens carried by every later turn |
-|---|---|
-| 10 | 18k |
-| 30 | 54k |
-| 60 | 108k |
-| 120 | 216k |
+That cost had a safety consequence, which turned out to matter more: verifying a click
+meant taking a screenshot, so verification got rationed — and the checks most likely to
+be skipped were the ones that catch destructive mistakes. The private-video near-miss
+above was caught only because a verification screenshot happened to exist.
 
-A long automation run is therefore dominated by screenshots taken near the *start*.
-An overnight run of ~51 web uploads at 2–3 captures each accumulated an estimated
-180–270k tokens of resident images.
+So clickr reads the screen as text wherever it can:
 
-clickr offers three ways to avoid that, in order of preference:
+- **`find_elements`** queries controls through the Accessibility API and returns exact
+  click coordinates as text — ~60ms, roughly a tenth the cost of a capture, and exact
+  rather than eyeballed. Works on native apps and on web pages.
+- **`read_text`** runs macOS's on-device text recognition over a region and returns text
+  only. No image, and no pixels leave the machine.
+- **`click`** reports the element it hit, so confirming a click needs no capture.
 
-1. **`find_elements`** — query controls through the Accessibility API by role and
-   title, and get exact click coordinates back as text. ~60ms, a few hundred tokens,
-   and exact rather than eyeballed. Works for native apps *and* for web pages, since
-   Chrome and Safari expose the DOM as accessibility elements. This removes the need
-   for most captures entirely.
-2. **`read_text`** — macOS's on-device text recognition reads a region and returns
-   **text only, no image**. Use it for "what does the error say", "did it save", or
-   anything on a canvas/video/remote desktop that the accessibility tree cannot see.
-   Plain text is by far the cheapest form; `withCoordinates` adds a click point per
-   line but costs several times more, so keep the region tight when using it.
-3. **`click` already reports what it hit** (`hitElement`), so confirming a click
-   usually needs no capture at all.
+Verification is now cheap enough to be unconditional, which is the real point: the safe
+habit and the cheap habit are finally the same habit.
 
-When you do capture: the default `maxDimension` is 800 (~590 tokens for a full
-display, versus ~1800 at 1400), a tight region beats a whole display, and
-**re-capturing an unchanged region returns a short text note instead of an identical
-image** — the earlier one is still in context, so re-sending it is pure waste.
+Screenshots remain available and are sometimes the right tool — a heavily custom web UI
+may expose nothing useful to the accessibility tree. The default `maxDimension` is 800
+(~590 tokens for a full display, against ~1800 at 1400), and re-capturing an unchanged
+region returns a short text note instead of a duplicate image.
 
 ## Tools
 
@@ -302,21 +262,15 @@ image** — the earlier one is still in context, so re-sending it is pure waste.
 
 ## Typical loop
 
-1. `list_windows` (or `list_displays`) to find the target window.
-2. `find_elements` with a `role` and/or `titleContains` to locate the control — this
-   returns exact click coordinates as text.
-3. `click` those coordinates; the result tells you which element was hit.
+1. `list_windows` or `list_displays` to find the target window.
+2. `find_elements` to locate the control — exact click coordinates, as text.
+3. `click`; the result reports which element was hit.
 4. `type_text` with `app` set to the target application.
-
-Reach for `screenshot` when you genuinely need to *see* layout — an unfamiliar UI, a
-visual state that has no textual equivalent — rather than as the default first step.
-When you do, `grid: true` overlays labelled global coordinates so a target can be read
-straight off the image.
 
 ## Focus: the one sharp edge
 
 Keyboard events go to whatever application is **frontmost**, which is not necessarily the
-one you last clicked. Two measured facts drive the design here:
+one that was last clicked. Two measured facts drive the design:
 
 - A synthetic click **does not activate** the app it lands on. The click reaches the right
   window, but keyboard focus stays where it was. `click` therefore activates the window's
@@ -326,35 +280,29 @@ one you last clicked. Two measured facts drive the design here:
   attribute, then AppleScript, and **verifies** frontmost status after each — reporting
   which method actually worked.
 
-Even so, other software can take focus back within milliseconds. So:
+Even then, other software can take focus back within milliseconds, so `type_text` and
+`press_key` accept an `app` argument that activates the target and *refuses to type* if
+it is not frontmost. Every response reports the `frontmostApp` that actually received
+the input.
 
-> **Pass `app` to `type_text` and `press_key`.** It activates the target first and then
-> *refuses to type* if that app is not frontmost, turning "typed into the wrong window"
-> from a silent accident into a harmless error. Every response also reports the
-> `frontmostApp` that actually received the input.
-
-Two things worth knowing about this machine specifically: a focus-follows-mouse /
-autoraise utility will fight synthetic activation, and **using the keyboard or mouse while
-clickr is driving** causes dropped characters and misdirected clicks. Keep hands off
-during an automated sequence.
+Worth knowing if you run this yourself: a focus-follows-mouse or autoraise utility will
+fight synthetic activation, and **using the keyboard or mouse while clickr is driving**
+causes dropped characters and misdirected clicks in both directions.
 
 ## Text entry
 
-**Any field with autocomplete or an IME gets `method: "paste"`, never keystrokes.**
-This is a rule, not a tip. An autocompleting field re-enters and reorders characters
-between keystrokes, so typed text arrives scrambled: `https://github.com/new` became
-`thub.co/gim/new/` in Chrome's omnibox. The same applies to the Open dialog's
-Cmd+Shift+G path field, search boxes, and address fields. A run of 51 uploads used paste
-for every path, title and description and had zero corruption — including paths
-containing `é` and `à`, which per-character typing also puts at risk.
+`type_text` has two modes, and the choice is not cosmetic.
 
-Paste puts the text on the clipboard, presses `cmd+V`, and restores the previous
-clipboard contents. It is also far faster for long text.
+**Paste** puts the text on the clipboard, presses `cmd+V`, and restores the previous
+clipboard. It is the correct mode for any field with autocomplete or an IME, because such
+fields re-enter and reorder characters between keystrokes: `https://github.com/new`
+arrived as `thub.co/gim/new/` in Chrome's omnibox. A run of 51 uploads used paste for
+every path, title and description with zero corruption, including paths containing `é`
+and `à`.
 
-Keystroke mode sends one key event per character at a 20 ms interval, which measured
-13/13 exact. Smaller intervals occasionally drop characters, and batching several
-characters into a single event corrupts text at the batch boundary — both measured, not
-assumed. Use it for plain fields where you want realistic per-character input.
+**Keystroke** sends one key event per character at a 20 ms interval, which measured 13/13
+exact. Smaller intervals occasionally drop characters, and batching several characters
+into a single event corrupts text at the batch boundary — both measured, not assumed.
 
 ## Guarding against stale coordinates
 
@@ -385,6 +333,27 @@ actually received, so click accuracy is verified numerically (it lands within 0 
 than merely assumed. It closes its own tab afterwards and leaves your window where it was;
 window move/resize checks are opt-in via `MOVE_WINDOW=1` precisely because shoving your
 window around mid-session is obnoxious.
+
+## How the agent is instructed
+
+This README is for people. Nothing here needs to be read for clickr to be used correctly,
+because **all agent-facing guidance ships inside the MCP server itself**:
+
+| where | what | when it loads |
+|---|---|---|
+| `src/instructions.ts` | tool-choice ordering, the coordinate model, stale-coordinate hazards, verification habits, the native-dialog recipe | every session, automatically |
+| each tool's description | detail for that specific tool — cost of a capture, when to use paste, what `expectGeometry` guards | on demand, when the tool is fetched |
+| `skills/Clickr/SKILL.md` | installation and troubleshooting only | when the skill is triggered |
+
+The split follows two constraints. Server instructions load in **every** session, so they
+carry the rules whose absence causes damage and nothing else. Tool descriptions are
+fetched on demand, so per-tool detail is cheaper there. And the skill exists only to solve
+the bootstrap problem — before clickr is installed, its instructions do not exist yet, so
+something has to explain how to install it.
+
+Consequence worth stating: rules are **not** duplicated across these surfaces. If you
+change how clickr should be used, change `src/instructions.ts` or the tool description —
+not this file.
 
 ## Architecture
 

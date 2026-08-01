@@ -6,76 +6,18 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { helper } from "./helper.js";
+import { INSTRUCTIONS } from "./instructions.js";
 import { tools } from "./tools.js";
 
+import { createRequire } from "node:module";
+// Keep the advertised version in step with the package rather than hand-maintaining it.
+const PKG_VERSION: string = createRequire(import.meta.url)("../package.json").version;
+
 const server = new Server(
-  { name: "clickr", version: "0.1.0" },
+  { name: "clickr", version: PKG_VERSION },
   {
     capabilities: { tools: {} },
-    instructions:
-      "clickr drives this Mac's screen and input devices directly: it captures any display " +
-      "region and posts real mouse and keyboard events, so it can operate any application " +
-      "without that application exposing a scripting interface.\n\n" +
-      "FIRST ASK: is the visible interaction itself what the user wants? If they asked to " +
-      "be shown something — 'show me how to do a pivot table in Excel', 'walk me through " +
-      "this dialog' — use clickr directly. Watching it happen is the deliverable, and doing " +
-      "it headlessly with a script misses the point entirely.\n\n" +
-      "OTHERWISE USE IT AS A FALLBACK. The ordering is NOT mainly about tokens — it is about " +
-      "whether the user can keep working. clickr moves the real pointer and types on the " +
-      "real keyboard, so the machine is yours for the duration: the user cannot touch it " +
-      "without corrupting the automation, and concurrent human input measurably causes " +
-      "dropped characters and misdirected clicks. Prefer, in order:\n" +
-      "  1. A real API or CLI (gh, HTTP, writing a file) — headless, takes nothing.\n" +
-      "  2. macos-automator-mcp (mcp__macos_automator__execute_script) using an app's " +
-      "AppleScript/JXA DICTIONARY — the app works internally, the pointer never moves, and " +
-      "it addresses things by name so nothing goes stale when a window moves.\n" +
-      "  3. The Chrome extension (mcp__claude-in-chrome__*) for anything in a web page — " +
-      "costs the user only a browser tab, reads pages as text, and uses refs that survive " +
-      "reflow.\n" +
-      "  4. clickr, and AppleScript UI SCRIPTING via System Events — both seize the pointer " +
-      "and keyboard. Note the split: a dictionary script is tier 2 and free, while System " +
-      "Events keystroke/click synthesises the same events clickr does and is tier 4. " +
-      "clickr's own niche is the native macOS Open/Save dialog (unreachable from a browser " +
-      "extension and not usefully scriptable) and apps with no dictionary — Electron, games, " +
-      "remote desktop, canvas UIs.\n\n" +
-      "WHEN YOU DO TAKE OVER, TELL THE USER FIRST — roughly how long, and to keep hands off " +
-      "the mouse and keyboard until you say you are done. They cannot know otherwise.\n\n" +
-      "PREFER TEXT OVER PIXELS. A screenshot costs about (width*height)/750 tokens and stays " +
-      "in the conversation, so it is re-sent every later turn; 30 full-screen captures means " +
-      "~54k tokens carried by every subsequent request. Use find_elements to locate controls " +
-      "by role/title and get exact click coordinates as text (~10x cheaper and exact), " +
-      "read_text for on-device OCR with no image, and note that click already reports the " +
-      "element it hit so verification rarely needs a capture.\n\n" +
-      "COORDINATES ARE GLOBAL POINTS: origin at the top-left of the main display, +y down. " +
-      "Displays left of or above the main display have negative coordinates, and any number " +
-      "of displays is supported. find_elements, list_windows, list_displays, screenshot and " +
-      "click all speak this same space.\n\n" +
-      "STALE COORDINATES ARE THE MAIN HAZARD — treat a coordinate as valid only for the " +
-      "state you measured it in. Three things invalidate one silently, and all three look " +
-      "identical when they happen (the click lands somewhere plausible and nothing errors): " +
-      "(a) layout reflow — your own click inserts a toolbar and everything below shifts, " +
-      "which is self-inflicted and fully avoidable: NEVER batch coordinate clicks across a " +
-      "state-changing action; (b) a display resolution change moving every window, which is " +
-      "external and can strike at any moment — carry the `geometry` token from list_displays " +
-      "or find_elements into click as expectGeometry and a mismatch refuses the action; " +
-      "(c) capturing an occluded window, where the image shows it unobstructed but the click " +
-      "hits whatever is on top — screenshot warns about this.\n\n" +
-      "VERIFY EVERY STATE-CHANGING CLICK. click returns hitElement describing what it " +
-      "actually hit, and find_elements costs ~385 tokens, so verification no longer needs a " +
-      "~2000-token screenshot. Check the result of anything that selects, deletes, publishes " +
-      "or otherwise changes state — batching clicks and hoping was a rational response to " +
-      "expensive verification and no longer is.\n\n" +
-      "TAKE THE DIRECT LINK WHEN THE APP OFFERS ONE. After creating something, apps offer a " +
-      "way straight to it — 'View post', 'Show in Finder', 'Open', 'Go to record'. Follow it " +
-      "rather than dismissing the dialog and hunting for the object in a list. Navigating " +
-      "directly means you are acting on the thing you just created, by construction; finding " +
-      "it in a list means identifying the right row among near-identical ones, and picking " +
-      "the wrong row is the most damaging mistake available in UI automation.\n\n" +
-      "Typing goes to whatever app is frontmost, and a synthetic click does not activate the " +
-      "app it lands on — always pass `app` to type_text and press_key so it activates the " +
-      "target and refuses to type anywhere else. Use method:'paste' for any field with " +
-      "autocomplete or an IME (URL bars, search boxes, file paths): such fields reorder " +
-      "characters between keystrokes and typed text arrives scrambled.",
+    instructions: INSTRUCTIONS,
   }
 );
 
