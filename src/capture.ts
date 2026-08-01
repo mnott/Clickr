@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,8 @@ export interface CaptureResult {
   rect: Rect;
   savedTo?: string;
   gridStep?: number;
+  /** Content hash, so an unchanged region can be reported instead of re-sent. */
+  hash: string;
 }
 
 /** The smallest rectangle covering every attached display. */
@@ -57,6 +60,41 @@ function chooseGridStep(pointsPerImagePixel: number, longEdgePoints: number): nu
   return best;
 }
 
+/** Raw, unscaled capture of a rectangle. Caller must call cleanup(). */
+export async function captureRaw(
+  rect: Rect,
+  windowId?: number
+): Promise<{ path: string; scale: number; cleanup: () => void }> {
+  if (!(rect.width >= 1) || !(rect.height >= 1)) {
+    throw new Error(
+      `capture region must be at least 1x1 points (got ${rect.width}x${rect.height})`
+    );
+  }
+  const displays = await getDisplays();
+  const scale = scaleForRect(rect, displays);
+  const dir = mkdtempSync(join(tmpdir(), "clickr-"));
+  const path = join(dir, "raw.png");
+
+  // -x: no shutter sound. -o: no window shadow. -R takes GLOBAL POINTS and
+  // accepts negative origins on multi-display setups.
+  const args = ["-x"];
+  if (windowId != null) args.push("-o", "-l", String(windowId));
+  else args.push(`-R${rect.x},${rect.y},${rect.width},${rect.height}`);
+  args.push(path);
+
+  try {
+    await run("/usr/sbin/screencapture", args, { timeout: 20_000 });
+  } catch (e: any) {
+    rmSync(dir, { recursive: true, force: true });
+    throw new Error(
+      `screencapture failed: ${e?.stderr || e?.message || e}. ` +
+        `This usually means Screen Recording permission is missing — run check_permissions.`
+    );
+  }
+
+  return { path, scale, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
 export interface CaptureOptions {
   /** Longest edge of the returned image, in pixels. */
   maxDimension?: number;
@@ -76,47 +114,19 @@ export interface CaptureOptions {
  * back to global coordinates by a single reported scalar.
  */
 export async function capture(rect: Rect, opts: CaptureOptions = {}): Promise<CaptureResult> {
-  if (!(rect.width >= 1) || !(rect.height >= 1)) {
-    throw new Error(
-      `capture region must be at least 1x1 points (got ${rect.width}x${rect.height})`
-    );
-  }
-
-  const displays = await getDisplays();
-  const deviceScale = scaleForRect(rect, displays);
-  const tmp = mkdtempSync(join(tmpdir(), "clickr-"));
-  const rawPath = join(tmp, "raw.png");
-  const outPath = opts.savePath ?? join(tmp, "out.png");
+  const raw = await captureRaw(rect, opts.windowId);
+  const dir = mkdtempSync(join(tmpdir(), "clickr-out-"));
+  const outPath = opts.savePath ?? join(dir, "out.png");
 
   try {
-    // -x: no shutter sound. -o: no window shadow. -R takes GLOBAL POINTS and
-    // happily accepts negative origins on multi-display setups.
-    const args = ["-x"];
-    if (opts.windowId != null) {
-      args.push("-o", "-l", String(opts.windowId));
-    } else {
-      args.push(`-R${rect.x},${rect.y},${rect.width},${rect.height}`);
-    }
-    args.push(rawPath);
-
-    try {
-      await run("/usr/sbin/screencapture", args, { timeout: 20_000 });
-    } catch (e: any) {
-      throw new Error(
-        `screencapture failed: ${e?.stderr || e?.message || e}. ` +
-          `This usually means Screen Recording permission is missing — run check_permissions.`
-      );
-    }
-
-    // Work out the output size. In point mode 1 image pixel == 1 point unless
-    // the region is larger than maxDimension, in which case we scale uniformly.
-    const maxDim = Math.max(64, opts.maxDimension ?? 1400);
+    // In point mode 1 image pixel == 1 point unless the region is larger than
+    // maxDimension, in which case we scale uniformly.
+    const maxDim = Math.max(64, opts.maxDimension ?? DEFAULT_MAX_DIMENSION);
     const longEdge = Math.max(rect.width, rect.height);
     let factor: number;
     if (opts.fullResolution) {
-      factor = deviceScale;
-      const longPixels = longEdge * deviceScale;
-      if (longPixels > maxDim) factor = maxDim / longEdge;
+      factor = raw.scale;
+      if (longEdge * raw.scale > maxDim) factor = maxDim / longEdge;
     } else {
       factor = longEdge > maxDim ? maxDim / longEdge : 1;
     }
@@ -130,7 +140,7 @@ export async function capture(rect: Rect, opts: CaptureOptions = {}): Promise<Ca
       : undefined;
 
     const res = await helper.send("image", {
-      input: rawPath,
+      input: raw.path,
       output: outPath,
       targetW,
       targetH,
@@ -146,52 +156,60 @@ export async function capture(rect: Rect, opts: CaptureOptions = {}): Promise<Ca
         : {}),
     });
 
-    const base64 = readFileSync(outPath).toString("base64");
+    const bytes = readFileSync(outPath);
     return {
-      base64,
+      base64: bytes.toString("base64"),
       imageWidth: res.width as number,
       imageHeight: res.height as number,
       pointsPerImagePixel,
       rect,
       savedTo: opts.savePath,
       gridStep,
+      hash: createHash("sha1").update(bytes).digest("hex").slice(0, 16),
     };
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    raw.cleanup();
+    if (!opts.savePath) rmSync(dir, { recursive: true, force: true });
+    else rmSync(dir, { recursive: true, force: true });
   }
 }
+
+/**
+ * Default output size, in pixels on the long edge.
+ *
+ * Vision tokens cost roughly width*height/750, and every image stays in the
+ * conversation and is re-sent on each following turn — so the default has to be
+ * cheap, not maximal. 800 costs ~590 tokens for a full display where 1400 cost
+ * ~1800. Callers that genuinely need detail can raise it, or better, capture a
+ * small region at 1:1.
+ */
+export const DEFAULT_MAX_DIMENSION = 800;
 
 /** Human-readable instructions for turning image pixels back into click targets. */
 export function coordinateGuide(r: CaptureResult): string {
   const p = r.pointsPerImagePixel;
   const exact = Math.abs(p - 1) < 1e-9;
   const lines = [
-    `Region captured: global points x=${r.rect.x} y=${r.rect.y} ` +
-      `w=${r.rect.width} h=${r.rect.height}`,
-    `Image size: ${r.imageWidth} x ${r.imageHeight} px`,
+    `Region: global points x=${r.rect.x} y=${r.rect.y} w=${r.rect.width} h=${r.rect.height}`,
+    `Image: ${r.imageWidth}x${r.imageHeight}px (~${Math.round(
+      (r.imageWidth * r.imageHeight) / 750
+    )} vision tokens)`,
   ];
   if (exact) {
     lines.push(
-      `Scale: 1 image pixel = 1 point (exact).`,
-      `To click something at image pixel (px, py):`,
-      `  x = ${r.rect.x} + px`,
-      `  y = ${r.rect.y} + py`
+      `Scale: 1 image pixel = 1 point (exact). Click target: x = ${r.rect.x} + px, y = ${r.rect.y} + py`
     );
   } else {
     lines.push(
-      `Scale: 1 image pixel = ${p.toFixed(4)} points.`,
-      `To click something at image pixel (px, py):`,
-      `  x = ${r.rect.x} + px * ${p.toFixed(4)}`,
-      `  y = ${r.rect.y} + py * ${p.toFixed(4)}`,
-      `For pixel-accurate work on a small target, take a second screenshot of a ` +
-        `small region around it — regions under ${1400} points come back at 1:1.`
+      `Scale: 1 image pixel = ${p.toFixed(4)} points. ` +
+        `Click target: x = ${r.rect.x} + px * ${p.toFixed(4)}, y = ${r.rect.y} + py * ${p.toFixed(4)}`,
+      `For exact work capture a smaller region — anything up to ${DEFAULT_MAX_DIMENSION} points comes back 1:1.`
     );
   }
   if (r.gridStep) {
     lines.push(
-      `A coordinate grid is overlaid: labelled lines every ${r.gridStep} points ` +
-        `(bright lines every ${r.gridStep * 5}). Labels are already in global ` +
-        `coordinates — read them directly, no conversion needed.`
+      `Grid: labelled every ${r.gridStep} points (bright every ${r.gridStep * 5}); ` +
+        `labels are already global coordinates.`
     );
   }
   return lines.join("\n");

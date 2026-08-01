@@ -1,6 +1,8 @@
 import {
   capture,
+  captureRaw,
   coordinateGuide,
+  DEFAULT_MAX_DIMENSION,
   unionOfDisplays,
   type Rect,
 } from "./capture.js";
@@ -21,6 +23,23 @@ const text = (s: string): Content[] => [{ type: "text", text: s }];
 const json = (o: unknown): Content[] => [
   { type: "text", text: JSON.stringify(o, null, 2) },
 ];
+/**
+ * Compact JSON for list-shaped results.
+ *
+ * Indented JSON roughly triples the size of a long list, and every token spent on
+ * whitespace is a token not spent on the task. Measured: 54 OCR lines cost ~1389
+ * tokens pretty-printed versus ~270 as compact lines.
+ */
+const compact = (o: unknown): Content[] => [{ type: "text", text: JSON.stringify(o) }];
+
+/**
+ * Content hash of the last image returned for a given target.
+ *
+ * Images stay in the conversation and are re-sent on every later turn, so returning
+ * a second, identical image is pure waste — the first one is still visible. When a
+ * re-capture matches, we say so in text and skip the image entirely.
+ */
+const lastImageHash = new Map<string, string>();
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -171,9 +190,18 @@ export const tools: Tool[] = [
       "Captures a screenshot and returns it as an image, together with the exact arithmetic " +
       "for converting any pixel in that image into a global coordinate you can click. " +
       "Choose exactly one target: display, region, window, app, or all. " +
-      "Regions of 1400 points or less come back at 1:1 (one image pixel = one point), which " +
-      "is the reliable way to measure a small UI element precisely. " +
-      "Turn on `grid` to overlay labelled global coordinates directly onto the image.",
+      "Regions up to " + DEFAULT_MAX_DIMENSION + " points come back at 1:1 (one image pixel = " +
+      "one point), which is the reliable way to measure a small UI element precisely. " +
+      "Turn on `grid` to overlay labelled global coordinates directly onto the image.\n\n" +
+      "COST: an image costs roughly (width*height)/750 tokens AND stays in the conversation, " +
+      "so it is re-sent on every later turn — 30 full-screen captures can mean 50k+ tokens " +
+      "carried by every subsequent request. Before reaching for this tool:\n" +
+      "  - find_elements returns buttons/fields with exact click coordinates as text, " +
+      "typically for a tenth of the cost. Prefer it for locating things.\n" +
+      "  - read_text OCRs a region locally and returns text only, no image.\n" +
+      "  - click already reports the element it hit, so verification rarely needs a capture.\n" +
+      "When you do capture, prefer a tight region over a whole display, and keep " +
+      "maxDimension small. Re-capturing an unchanged region returns text, not a new image.",
     inputSchema: {
       type: "object",
       properties: {
@@ -212,7 +240,15 @@ export const tools: Tool[] = [
         maxDimension: {
           ...num,
           description:
-            "Longest edge of the returned image in pixels. Default 1400. Lower it to save tokens.",
+            `Longest edge of the returned image in pixels. Default ${DEFAULT_MAX_DIMENSION} ` +
+            `(~590 tokens for a full display; 1400 would cost ~1800). Lower is cheaper.`,
+        },
+        skipIfUnchanged: {
+          ...bool,
+          description:
+            "Default true. If this exact region is pixel-identical to the previous capture, " +
+            "return a short text note instead of an identical image, since the earlier image " +
+            "is still in the conversation. Set false to force a fresh image.",
         },
         fullResolution: {
           ...bool,
@@ -300,7 +336,51 @@ export const tools: Tool[] = [
         savePath: a.savePath,
       });
 
+      // If this exact target looks identical to what we already sent, don't send
+      // the pixels again — the previous image is still in the conversation.
+      const cacheKey = JSON.stringify([
+        windowId ?? null,
+        rect,
+        shot.imageWidth,
+        shot.imageHeight,
+        shot.gridStep ?? null,
+      ]);
+      if (a.skipIfUnchanged !== false && lastImageHash.get(cacheKey) === shot.hash) {
+        return text(
+          `Unchanged: ${label} is pixel-identical to the last capture of the same ` +
+            `region (hash ${shot.hash}), so the image was not re-sent — scroll back to ` +
+            `that earlier screenshot, it is still accurate.\n\n` +
+            coordinateGuide(shot) +
+            `\n\nPass skipIfUnchanged: false to force a fresh image.`
+        );
+      }
+      lastImageHash.set(cacheKey, shot.hash);
+
       const parts = [`Captured ${label}.`, "", coordinateGuide(shot)];
+
+      // A window capture composites the window unoccluded, so it can show content
+      // that is really hidden behind something else — and a click computed from it
+      // would land on whatever is actually on top.
+      if (windowId != null) {
+        try {
+          const occ = await helper.send("occlusion", { windowId });
+          if (occ.occluded) {
+            const names = (occ.occluders as any[])
+              .map((o) => o.app + (o.title ? ` (${o.title})` : ""))
+              .slice(0, 4);
+            parts.push(
+              "",
+              `WARNING: this window is ${Math.round((occ.coveredFraction as number) * 100)}% ` +
+                `covered by ${names.join(", ")}. The capture shows the window as if ` +
+                `unobstructed, but a click at these coordinates would hit the window on ` +
+                `top. Raise this window first (set_window_bounds with raise: true), or ` +
+                `capture by region to see what is actually visible.`
+            );
+          }
+        } catch {
+          // Occlusion info is advisory; never fail a capture over it.
+        }
+      }
 
       // Knowing what is on screen makes the image far easier to act on.
       if (windowId == null) {
@@ -333,6 +413,178 @@ export const tools: Tool[] = [
         { type: "image", data: shot.base64, mimeType: "image/png" },
         { type: "text", text: parts.join("\n") },
       ];
+    },
+  },
+
+  {
+    name: "find_elements",
+    description:
+      "Finds UI controls through the macOS Accessibility API and returns them as TEXT with " +
+      "exact click coordinates (centerX/centerY, ready to pass to click). " +
+      "PREFER THIS OVER screenshot for locating anything: it typically costs a tenth as " +
+      "much, it is exact rather than eyeballed, and it does not leave an image in the " +
+      "conversation forever. Works for native apps and for web pages in Chrome/Safari, " +
+      "which expose the DOM as accessibility elements.\n\n" +
+      "Filter by role (AXButton, AXTextField, AXCheckBox, AXLink, AXMenuItem, ...) and/or " +
+      "titleContains. Narrow with windowId when an app has several windows. If results are " +
+      "truncated, filter harder rather than raising maxResults.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { ...str, description: "App name, e.g. 'Google Chrome'." },
+        pid: num,
+        bundleId: str,
+        windowId: {
+          ...num,
+          description: "Restrict the search to this window (much faster than the whole app).",
+        },
+        windowIndex: { ...num, description: "Restrict to the app's Nth window (0 = frontmost)." },
+        role: {
+          ...str,
+          description:
+            "Accessibility role or subrole, e.g. AXButton, AXTextField, AXLink, AXCheckBox, " +
+            "AXRadioButton, AXMenuItem, AXStaticText. Matched case-insensitively.",
+        },
+        titleContains: {
+          ...str,
+          description:
+            "Substring matched against the element's title, description, value or help text.",
+        },
+        onlyActionable: {
+          ...bool,
+          description: "Only elements that can be pressed (have an AXPress action).",
+        },
+        region: {
+          type: "object",
+          description: "Only elements intersecting this rectangle of global points.",
+          properties: { x: num, y: num, width: num, height: num },
+          required: ["x", "y", "width", "height"],
+        },
+        maxResults: { ...num, description: "Cap on returned elements. Default 40." },
+        maxDepth: { ...num, description: "Tree depth limit. Default 18." },
+      },
+    },
+    handler: async (a) => compact(await helper.send("elements", a, 30_000)),
+  },
+
+  {
+    name: "element_at",
+    description:
+      "Describes the accessibility element at a global coordinate — role, title, value and " +
+      "state — as text. Use it to confirm what is under a point before clicking, or what a " +
+      "click landed on, without spending an image on it.",
+    inputSchema: {
+      type: "object",
+      properties: { x: num, y: num },
+      required: ["x", "y"],
+    },
+    handler: async (a) => compact(await helper.send("elementat", a)),
+  },
+
+  {
+    name: "read_text",
+    description:
+      "Reads the text on screen using macOS's on-device text recognition and returns it as " +
+      "TEXT — no image is sent. Use this to answer questions like 'what does the error say', " +
+      "'did the title save', 'what is in that list' for a fraction of a screenshot's cost, " +
+      "and when the content is not exposed through the accessibility tree (canvas, video, " +
+      "remote desktop, images).\n\n" +
+      "By default returns plain text in reading order, which is the cheapest form. Set " +
+      "withCoordinates to also get a click point per line — useful for locating something, " +
+      "but several times more expensive, so keep the region tight when you do.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        region: {
+          type: "object",
+          description: "Rectangle of global points to read. Prefer a tight region.",
+          properties: { x: num, y: num, width: num, height: num },
+          required: ["x", "y", "width", "height"],
+        },
+        display: { ...num, description: "Read a whole display instead of a region." },
+        window: { ...num, description: "Read a specific window by windowId." },
+        app: { ...str, description: "Read that app's frontmost window." },
+        withCoordinates: {
+          ...bool,
+          description:
+            "Include a click point per line (centerX/centerY). Costs several times more " +
+            "than plain text — only use it when you need to click what you read.",
+        },
+        minConfidence: { ...num, description: "Drop lines below this confidence. Default 0.3." },
+        fast: { ...bool, description: "Faster, less accurate recognition." },
+        languages: {
+          type: "array",
+          items: str,
+          description: "Recognition languages, e.g. ['en-US','de-DE']. Default: system.",
+        },
+      },
+    },
+    handler: async (a) => {
+      const displays = await getDisplays();
+      let rect: Rect;
+      let windowId: number | undefined;
+
+      if (a.window != null || a.app) {
+        const windows = await getWindows({
+          app: a.app,
+          onScreenOnly: a.window == null,
+          includeAllLayers: a.window != null,
+        });
+        const w =
+          a.window != null
+            ? windows.find((w) => w.windowId === a.window)
+            : [...windows].sort(
+                (p, q) =>
+                  Number(!!q.title) - Number(!!p.title) ||
+                  q.width * q.height - p.width * p.height
+              )[0];
+        if (!w) throw new Error(`No window found for ${a.window ?? a.app}.`);
+        rect = { x: w.x, y: w.y, width: w.width, height: w.height };
+        windowId = w.windowId;
+      } else if (a.region) {
+        rect = a.region;
+      } else {
+        const d =
+          displays.find((x) => x.index === (a.display ?? -1)) ??
+          displays.find((x) => x.main) ??
+          displays[0];
+        rect = { x: d.x, y: d.y, width: d.width, height: d.height };
+      }
+
+      // OCR runs on the raw, full-resolution capture for accuracy; only text leaves.
+      const raw = await captureRaw(rect, windowId);
+      try {
+        const res = await helper.send(
+          "ocr",
+          {
+            input: raw.path,
+            originX: rect.x,
+            originY: rect.y,
+            scale: raw.scale,
+            minConfidence: a.minConfidence,
+            fast: !!a.fast,
+            languages: a.languages,
+          },
+          60_000
+        );
+        const lines = (res.lines as any[]) ?? [];
+        if (!lines.length) return text("No text recognised in that region.");
+
+        if (a.withCoordinates) {
+          // One compact line each: text, then a click point.
+          const body = lines
+            .map((l) => `${l.text}\t@${l.centerX},${l.centerY}`)
+            .join("\n");
+          return text(
+            `${lines.length} line(s) in region x=${rect.x} y=${rect.y} ` +
+              `w=${rect.width} h=${rect.height}. ` +
+              `Format: text <TAB> @clickX,clickY (global points).\n\n${body}`
+          );
+        }
+        return text(lines.map((l) => l.text).join("\n"));
+      } finally {
+        raw.cleanup();
+      }
     },
   },
 

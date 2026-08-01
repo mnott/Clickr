@@ -52,6 +52,43 @@ For fiddly targets, screenshot a small region around the element rather than the
 screen. Passing `grid: true` overlays labelled global coordinates directly on the image,
 so a click target can be read off by eye.
 
+## Cost: prefer text over pixels
+
+This matters more than anything else in this README. An image costs roughly
+`width * height / 750` tokens **and stays in the conversation**, so it is re-sent on
+every following turn. Cost is cumulative, not per-screenshot:
+
+| full-display screenshots | tokens carried by every later turn |
+|---|---|
+| 10 | 18k |
+| 30 | 54k |
+| 60 | 108k |
+| 120 | 216k |
+
+A long automation run is therefore dominated by screenshots taken near the *start*.
+An overnight run of ~51 web uploads at 2–3 captures each accumulated an estimated
+180–270k tokens of resident images.
+
+clickr offers three ways to avoid that, in order of preference:
+
+1. **`find_elements`** — query controls through the Accessibility API by role and
+   title, and get exact click coordinates back as text. ~60ms, a few hundred tokens,
+   and exact rather than eyeballed. Works for native apps *and* for web pages, since
+   Chrome and Safari expose the DOM as accessibility elements. This removes the need
+   for most captures entirely.
+2. **`read_text`** — macOS's on-device text recognition reads a region and returns
+   **text only, no image**. Use it for "what does the error say", "did it save", or
+   anything on a canvas/video/remote desktop that the accessibility tree cannot see.
+   Plain text is by far the cheapest form; `withCoordinates` adds a click point per
+   line but costs several times more, so keep the region tight when using it.
+3. **`click` already reports what it hit** (`hitElement`), so confirming a click
+   usually needs no capture at all.
+
+When you do capture: the default `maxDimension` is 800 (~590 tokens for a full
+display, versus ~1800 at 1400), a tight region beats a whole display, and
+**re-capturing an unchanged region returns a short text note instead of an identical
+image** — the earlier one is still in context, so re-sending it is pure waste.
+
 ## Tools
 
 | Tool | Purpose |
@@ -60,6 +97,9 @@ so a click target can be read off by eye.
 | `list_displays` | Every display's position and size in global points |
 | `list_windows` | On-screen windows with app, title, and bounds |
 | `list_apps` | Running applications with pid and bundle id |
+| `find_elements` | **Locate controls as text with exact click coordinates — prefer over screenshot** |
+| `read_text` | **On-device OCR of a region; returns text, no image** |
+| `element_at` | Describe the accessibility element at a coordinate |
 | `screenshot` | Capture a display, region, window, app, or the whole desktop |
 | `click` | Click at a global coordinate, with modifiers and multi-click |
 | `move_mouse` | Move the pointer (hover states) |
@@ -74,10 +114,16 @@ so a click target can be read off by eye.
 
 ## Typical loop
 
-1. `list_windows` (or `list_displays`) to find the target.
-2. `screenshot` with `grid: true` to see and measure it.
-3. `click` the field you want.
+1. `list_windows` (or `list_displays`) to find the target window.
+2. `find_elements` with a `role` and/or `titleContains` to locate the control — this
+   returns exact click coordinates as text.
+3. `click` those coordinates; the result tells you which element was hit.
 4. `type_text` with `app` set to the target application.
+
+Reach for `screenshot` when you genuinely need to *see* layout — an unfamiliar UI, a
+visual state that has no textual equivalent — rather than as the default first step.
+When you do, `grid: true` overlays labelled global coordinates so a target can be read
+straight off the image.
 
 ## Focus: the one sharp edge
 

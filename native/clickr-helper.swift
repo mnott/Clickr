@@ -13,6 +13,7 @@ import CoreText
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+import Vision
 
 // MARK: - Event source
 
@@ -337,6 +338,16 @@ func doClick(_ obj: [String: Any]) throws -> [String: Any] {
             "title": w[kCGWindowName as String] as? String ?? "",
         ]
     }
+    // Report what was actually hit, so the caller can confirm the click landed on the
+    // intended control without spending a screenshot on verification.
+    if obj["describeTarget"] as? Bool ?? true, let hit = elementAtPoint(point) {
+        var summary: [String: Any] = ["role": hit["role"] ?? ""]
+        for key in ["subrole", "title", "description", "value", "enabled", "focused"] {
+            if let v = hit[key] { summary[key] = v }
+        }
+        if let parent = hit["parent"] { summary["parent"] = parent }
+        result["hitElement"] = summary
+    }
     return result
 }
 
@@ -560,6 +571,223 @@ func resolveWindow(_ obj: [String: Any], pid: pid_t) throws -> (AXUIElement, Int
         throw HelperError("windowIndex \(idx) out of range; app has \(windows.count) window(s)")
     }
     return (windows[idx], idx, "windowIndex \(idx)")
+}
+
+// MARK: - Accessibility element queries
+//
+// This is the cheap alternative to screenshotting. A screenshot of a display costs
+// roughly width*height/750 vision tokens and stays in the conversation forever;
+// the same UI described through the accessibility tree is a few hundred tokens of
+// text and already carries exact click coordinates.
+
+func axCopy(_ el: AXUIElement, _ attr: String) -> CFTypeRef? {
+    var ref: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(el, attr as CFString, &ref) == .success else { return nil }
+    return ref
+}
+
+func axStr(_ el: AXUIElement, _ attr: String) -> String? {
+    guard let v = axCopy(el, attr) else { return nil }
+    if let s = v as? String { return s }
+    if let n = v as? NSNumber { return n.stringValue }
+    return nil
+}
+
+func axBool(_ el: AXUIElement, _ attr: String) -> Bool? {
+    (axCopy(el, attr) as? NSNumber)?.boolValue
+}
+
+func axFrame(_ el: AXUIElement) -> CGRect? {
+    var pos = CGPoint.zero
+    var size = CGSize.zero
+    guard let p = axCopy(el, kAXPositionAttribute as String),
+        let s = axCopy(el, kAXSizeAttribute as String),
+        AXValueGetValue(p as! AXValue, .cgPoint, &pos),
+        AXValueGetValue(s as! AXValue, .cgSize, &size)
+    else { return nil }
+    return CGRect(origin: pos, size: size)
+}
+
+func axActionNames(_ el: AXUIElement) -> [String] {
+    var names: CFArray?
+    guard AXUIElementCopyActionNames(el, &names) == .success else { return [] }
+    return (names as? [String]) ?? []
+}
+
+/// Compact description of one element. Long values are truncated: the point is to
+/// identify and locate a control, not to reproduce a document.
+func describe(_ el: AXUIElement, depth: Int) -> [String: Any]? {
+    guard let frame = axFrame(el) else { return nil }
+    // Zero-sized and offscreen elements cannot be clicked, so they are noise.
+    guard frame.width >= 1, frame.height >= 1 else { return nil }
+
+    var out: [String: Any] = [
+        "role": axStr(el, kAXRoleAttribute as String) ?? "",
+        "x": frame.minX, "y": frame.minY,
+        "width": frame.width, "height": frame.height,
+        // Ready to hand straight to `click`.
+        "centerX": (frame.midX).rounded(),
+        "centerY": (frame.midY).rounded(),
+        "depth": depth,
+    ]
+    if let v = axStr(el, kAXSubroleAttribute as String), !v.isEmpty { out["subrole"] = v }
+    if let v = axStr(el, kAXTitleAttribute as String), !v.isEmpty { out["title"] = v }
+    if let v = axStr(el, kAXDescriptionAttribute as String), !v.isEmpty { out["description"] = v }
+    if let v = axStr(el, kAXHelpAttribute as String), !v.isEmpty { out["help"] = v }
+    if let v = axStr(el, kAXValueAttribute as String), !v.isEmpty {
+        out["value"] = v.count > 200 ? String(v.prefix(200)) + "…" : v
+    }
+    if let v = axBool(el, kAXEnabledAttribute as String) { out["enabled"] = v }
+    if let v = axBool(el, kAXFocusedAttribute as String), v { out["focused"] = true }
+    let actions = axActionNames(el)
+    if !actions.isEmpty { out["actions"] = actions }
+    return out
+}
+
+struct ElementFilter {
+    var role: String?
+    var titleContains: String?
+    var onlyActionable: Bool
+    var includeOffscreen: Bool
+    var bounds: CGRect?
+}
+
+func matches(_ info: [String: Any], _ f: ElementFilter) -> Bool {
+    if let role = f.role, !role.isEmpty {
+        let actual = (info["role"] as? String ?? "")
+        let sub = (info["subrole"] as? String ?? "")
+        if actual.caseInsensitiveCompare(role) != .orderedSame
+            && sub.caseInsensitiveCompare(role) != .orderedSame { return false }
+    }
+    if let needle = f.titleContains, !needle.isEmpty {
+        let haystack = [
+            info["title"] as? String, info["description"] as? String,
+            info["value"] as? String, info["help"] as? String,
+        ].compactMap { $0 }.joined(separator: " ")
+        if !haystack.localizedCaseInsensitiveContains(needle) { return false }
+    }
+    if f.onlyActionable {
+        let actions = info["actions"] as? [String] ?? []
+        if !actions.contains(kAXPressAction as String) { return false }
+    }
+    if let b = f.bounds {
+        let r = CGRect(x: info["x"] as? Double ?? 0, y: info["y"] as? Double ?? 0,
+                       width: info["width"] as? Double ?? 0, height: info["height"] as? Double ?? 0)
+        if !b.intersects(r) { return false }
+    }
+    return true
+}
+
+/// Breadth-first walk with hard caps. Some apps (browsers especially) expose tens of
+/// thousands of nodes, so an unbounded walk would hang and blow the response size.
+func walkElements(root: AXUIElement, filter: ElementFilter,
+                  maxDepth: Int, maxResults: Int, nodeBudget: Int) -> ([[String: Any]], Bool) {
+    var results: [[String: Any]] = []
+    var queue: [(AXUIElement, Int)] = [(root, 0)]
+    var visited = 0
+    var truncated = false
+
+    while !queue.isEmpty {
+        let (el, depth) = queue.removeFirst()
+        visited += 1
+        if visited > nodeBudget { truncated = true; break }
+
+        if depth > 0, let info = describe(el, depth: depth) {
+            if matches(info, filter) {
+                results.append(info)
+                if results.count >= maxResults { truncated = true; break }
+            }
+        }
+        if depth >= maxDepth { continue }
+        if let children = axCopy(el, kAXChildrenAttribute as String) as? [AXUIElement] {
+            for child in children { queue.append((child, depth + 1)) }
+        }
+    }
+    return (results, truncated)
+}
+
+func doFindElements(_ obj: [String: Any]) throws -> [String: Any] {
+    try requireAccessibility()
+    let app = try findApp(obj)
+    let pid = app.processIdentifier
+    let axApp = AXUIElementCreateApplication(pid)
+    // Never let an unresponsive app hang the server.
+    AXUIElementSetMessagingTimeout(axApp, 2.0)
+
+    var bounds: CGRect? = nil
+    if let r = obj["region"] as? [String: Any],
+        let x = num(r["x"]), let y = num(r["y"]),
+        let w = num(r["width"]), let h = num(r["height"]) {
+        bounds = CGRect(x: x, y: y, width: w, height: h)
+    }
+
+    let filter = ElementFilter(
+        role: obj["role"] as? String,
+        titleContains: obj["titleContains"] as? String,
+        onlyActionable: obj["onlyActionable"] as? Bool ?? false,
+        includeOffscreen: obj["includeOffscreen"] as? Bool ?? false,
+        bounds: bounds)
+
+    let maxDepth = Int(num(obj["maxDepth"]) ?? 18)
+    let maxResults = Int(num(obj["maxResults"]) ?? 40)
+    let nodeBudget = Int(num(obj["nodeBudget"]) ?? 20000)
+
+    // Searching a single window is dramatically cheaper than the whole app.
+    var root = axApp
+    var scope = "application"
+    if let wid = num(obj["windowId"]).map({ Int($0) }) {
+        let (window, _, matchedBy) = try resolveWindow(["windowId": wid], pid: pid)
+        root = window
+        scope = matchedBy
+    } else if let idx = num(obj["windowIndex"]).map({ Int($0) }) {
+        let (window, _, matchedBy) = try resolveWindow(["windowIndex": idx], pid: pid)
+        root = window
+        scope = matchedBy
+    }
+
+    let (results, truncated) = walkElements(
+        root: root, filter: filter, maxDepth: maxDepth,
+        maxResults: maxResults, nodeBudget: nodeBudget)
+
+    return [
+        "app": app.localizedName ?? "", "pid": Int(pid), "scope": scope,
+        "count": results.count, "truncated": truncated,
+        "elements": results,
+    ]
+}
+
+/// What is actually under a point — the cheap way to confirm a click target or a
+/// click result without capturing an image.
+func elementAtPoint(_ p: CGPoint) -> [String: Any]? {
+    let system = AXUIElementCreateSystemWide()
+    AXUIElementSetMessagingTimeout(system, 2.0)
+    var el: AXUIElement?
+    guard AXUIElementCopyElementAtPosition(system, Float(p.x), Float(p.y), &el) == .success,
+        let element = el
+    else { return nil }
+    var info = describe(element, depth: 0)
+    // The immediate parent usually carries the label when the hit lands on inner text.
+    if var i = info, let parent = axCopy(element, kAXParentAttribute as String) {
+        // swiftlint:disable:next force_cast
+        let parentEl = parent as! AXUIElement
+        if let p = describe(parentEl, depth: 0) {
+            var summary: [String: Any] = ["role": p["role"] ?? ""]
+            if let t = p["title"] { summary["title"] = t }
+            if let d = p["description"] { summary["description"] = d }
+            i["parent"] = summary
+        }
+        info = i
+    }
+    return info
+}
+
+func doElementAt(_ obj: [String: Any]) throws -> [String: Any] {
+    try requireAccessibility()
+    let p = CGPoint(x: try req(obj, "x"), y: try req(obj, "y"))
+    guard let info = elementAtPoint(p) else {
+        throw HelperError("no accessibility element at (\(Int(p.x)), \(Int(p.y)))")
+    }
+    return ["x": p.x, "y": p.y, "element": info]
 }
 
 func doSetWindow(_ obj: [String: Any]) throws -> [String: Any] {
@@ -857,6 +1085,127 @@ func doImage(_ obj: [String: Any]) throws -> [String: Any] {
     ]
 }
 
+// MARK: - Local OCR
+//
+// macOS ships an on-device text recogniser, so a screen region can be turned into
+// text *locally* and only the text sent onward. A full-display screenshot costs
+// ~1800 vision tokens and stays in context forever; the same screen read as text
+// is a few hundred tokens and carries click coordinates with it.
+
+func doOCR(_ obj: [String: Any]) throws -> [String: Any] {
+    guard let input = obj["input"] as? String else { throw HelperError("missing 'input'") }
+    let image = try loadImage(input)
+
+    // Maps recognised boxes back into the global point space.
+    let originX = num(obj["originX"]) ?? 0
+    let originY = num(obj["originY"]) ?? 0
+    let scale = num(obj["scale"]) ?? 1  // capture pixels per point
+    let minConfidence = Float(num(obj["minConfidence"]) ?? 0.3)
+
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel =
+        (obj["fast"] as? Bool ?? false) ? .fast : .accurate
+    request.usesLanguageCorrection = obj["languageCorrection"] as? Bool ?? true
+    if let langs = obj["languages"] as? [String], !langs.isEmpty {
+        request.recognitionLanguages = langs
+    }
+
+    let handler = VNImageRequestHandler(cgImage: image, options: [:])
+    do {
+        try handler.perform([request])
+    } catch {
+        throw HelperError("text recognition failed: \(error.localizedDescription)")
+    }
+
+    let pixelW = Double(image.width)
+    let pixelH = Double(image.height)
+    var lines: [[String: Any]] = []
+
+    for observation in (request.results ?? []) {
+        guard let candidate = observation.topCandidates(1).first else { continue }
+        if candidate.confidence < minConfidence { continue }
+
+        // Vision boxes are normalised with a bottom-left origin; the rest of clickr
+        // is top-left in points, so flip and rescale.
+        let b = observation.boundingBox
+        let xPx = b.minX * pixelW
+        let yPxFromTop = (1.0 - b.maxY) * pixelH
+        let wPx = b.width * pixelW
+        let hPx = b.height * pixelH
+
+        let gx = originX + xPx / scale
+        let gy = originY + yPxFromTop / scale
+        let gw = wPx / scale
+        let gh = hPx / scale
+
+        lines.append([
+            "text": candidate.string,
+            "confidence": Double(candidate.confidence),
+            "x": gx.rounded(), "y": gy.rounded(),
+            "width": gw.rounded(), "height": gh.rounded(),
+            // Ready to pass straight to `click`.
+            "centerX": (gx + gw / 2).rounded(),
+            "centerY": (gy + gh / 2).rounded(),
+        ])
+    }
+
+    // Reading order: top to bottom, then left to right.
+    lines.sort { a, b in
+        let ay = a["y"] as? Double ?? 0, by = b["y"] as? Double ?? 0
+        if abs(ay - by) > 6 { return ay < by }
+        return (a["x"] as? Double ?? 0) < (b["x"] as? Double ?? 0)
+    }
+
+    return ["lineCount": lines.count, "lines": lines]
+}
+
+// MARK: - Occlusion
+
+/// Windows stacked above `windowId` that overlap it. A window capture composites the
+/// target unoccluded, so its image can show content that is really hidden — and a
+/// click at those coordinates would land on whatever is actually on top.
+func doOcclusion(_ obj: [String: Any]) throws -> [String: Any] {
+    let wid = Int(try req(obj, "windowId"))
+    guard let raw = CGWindowListCopyWindowInfo(
+        [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+    else { throw HelperError("could not read the window list") }
+
+    guard let targetIndex = raw.firstIndex(where: { ($0[kCGWindowNumber as String] as? Int) == wid })
+    else { throw HelperError("window \(wid) is not on screen") }
+
+    guard let bd = raw[targetIndex][kCGWindowBounds as String] as? [String: Any],
+        let target = CGRect(dictionaryRepresentation: bd as CFDictionary)
+    else { throw HelperError("window \(wid) has no bounds") }
+
+    var occluders: [[String: Any]] = []
+    var coveredArea = 0.0
+    // The list is front-to-back, so anything before the target sits above it.
+    for w in raw[..<targetIndex] {
+        guard (w[kCGWindowLayer as String] as? Int ?? 0) <= 0 else { continue }
+        guard let obd = w[kCGWindowBounds as String] as? [String: Any],
+            let r = CGRect(dictionaryRepresentation: obd as CFDictionary)
+        else { continue }
+        let overlap = r.intersection(target)
+        if overlap.isNull || overlap.width < 1 || overlap.height < 1 { continue }
+        coveredArea += Double(overlap.width * overlap.height)
+        occluders.append([
+            "windowId": w[kCGWindowNumber as String] as? Int ?? 0,
+            "app": w[kCGWindowOwnerName as String] as? String ?? "",
+            "title": w[kCGWindowName as String] as? String ?? "",
+            "x": Double(overlap.minX), "y": Double(overlap.minY),
+            "width": Double(overlap.width), "height": Double(overlap.height),
+        ])
+    }
+
+    let total = Double(target.width * target.height)
+    return [
+        "windowId": wid,
+        "occluded": !occluders.isEmpty,
+        "coveredFraction": total > 0 ? min(1.0, coveredArea / total) : 0,
+        "occluders": occluders,
+    ]
+}
+
 // MARK: - Dispatch
 
 func handle(_ obj: [String: Any]) throws -> [String: Any] {
@@ -897,6 +1246,10 @@ func handle(_ obj: [String: Any]) throws -> [String: Any] {
     case "activate": return try doActivate(obj)
     case "setwindow": return try doSetWindow(obj)
     case "image": return try doImage(obj)
+    case "elements": return try doFindElements(obj)
+    case "elementat": return try doElementAt(obj)
+    case "ocr": return try doOCR(obj)
+    case "occlusion": return try doOcclusion(obj)
     default:
         throw HelperError("unknown command '\(cmd)'")
     }

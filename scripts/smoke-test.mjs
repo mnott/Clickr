@@ -56,7 +56,7 @@ proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initial
 
 const list = await rpc("tools/list", {});
 const names = (list.result?.tools ?? []).map((t) => t.name);
-check("tools/list", names.length === 16, `${names.length} tools: ${names.join(", ")}`);
+check("tools/list", names.length === 19, `${names.length} tools: ${names.join(", ")}`);
 
 const perms = await rpc("tools/call", { name: "check_permissions", arguments: {} });
 check("check_permissions", !perms.result?.isError, textOf(perms).replace(/\n/g, " | "));
@@ -124,6 +124,53 @@ check("unknown key errors clearly", badKey.result?.isError === true, textOf(badK
 
 const clip = await rpc("tools/call", { name: "get_clipboard", arguments: {} });
 check("get_clipboard", !clip.result?.isError);
+
+// --- Text-based observation: the cheap alternatives to a screenshot. ---
+const frontApp = JSON.parse(textOf(await rpc("tools/call", { name: "list_apps", arguments: {} })))
+  .apps.find((x) => x.active);
+if (frontApp) {
+  const els = await rpc("tools/call", {
+    name: "find_elements",
+    arguments: { pid: frontApp.pid, onlyActionable: true, maxResults: 5 },
+  });
+  const parsed = JSON.parse(textOf(els));
+  check("find_elements returns coordinates as text", parsed.count > 0,
+    `${parsed.count} actionable element(s) in ${frontApp.name}`);
+  const first = parsed.elements?.[0];
+  check("elements carry a click point", first && typeof first.centerX === "number",
+    first ? `${first.role} @(${first.centerX},${first.centerY})` : "none");
+}
+
+const at = await rpc("tools/call", { name: "element_at", arguments: { x: 100, y: 12 } });
+check("element_at describes a point", !at.result?.isError, textOf(at).slice(0, 90));
+
+const ocr = await rpc("tools/call", {
+  name: "read_text",
+  arguments: { region: { x: 0, y: 0, width: 1000, height: 60 } },
+});
+const ocrText = textOf(ocr);
+check("read_text returns text and no image",
+  !ocr.result?.isError &&
+    !(ocr.result?.content ?? []).some((c) => c.type === "image"),
+  `${ocrText.split("\n").length} line(s), ${ocrText.length} chars`);
+
+// --- Identical re-capture must not re-send pixels. ---
+const r1 = await rpc("tools/call", {
+  name: "screenshot", arguments: { region: { x: 0, y: 0, width: 400, height: 200 } },
+});
+const r2 = await rpc("tools/call", {
+  name: "screenshot", arguments: { region: { x: 0, y: 0, width: 400, height: 200 } },
+});
+const had1 = (r1.result?.content ?? []).some((c) => c.type === "image");
+const had2 = (r2.result?.content ?? []).some((c) => c.type === "image");
+check("unchanged region is not re-sent as an image", had1 && !had2,
+  `first capture image=${had1}, second image=${had2}`);
+const forced = await rpc("tools/call", {
+  name: "screenshot",
+  arguments: { region: { x: 0, y: 0, width: 400, height: 200 }, skipIfUnchanged: false },
+});
+check("skipIfUnchanged:false forces a fresh image",
+  (forced.result?.content ?? []).some((c) => c.type === "image"));
 
 console.log(fails.length ? `\n${fails.length} FAILURE(S): ${fails.join(", ")}` : "\nAll checks passed.");
 proc.kill();
