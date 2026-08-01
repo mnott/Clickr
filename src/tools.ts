@@ -121,8 +121,9 @@ export const tools: Tool[] = [
       "screenshotting to learn which display index you want.",
     inputSchema: { type: "object", properties: {} },
     handler: async () => {
-      const displays = await getDisplays();
-      const union = unionOfDisplays(displays);
+      const res = await helper.send("displays");
+      const displays = res.displays as any[];
+      const union = unionOfDisplays(displays as any);
       const rows = displays.map((d) => ({
         index: d.index,
         main: d.main,
@@ -134,7 +135,11 @@ export const tools: Tool[] = [
         displayCount: displays.length,
         displays: rows,
         combinedDesktopBounds: union,
-        note: "bounds are in global points — pass them straight to screenshot or click.",
+        geometry: res.geometry,
+        note:
+          "bounds are in global points — pass them straight to screenshot or click. " +
+          "`geometry` fingerprints this display layout: pass it to click/drag/scroll as " +
+          "expectGeometry and the action is refused if the layout changed in the meantime.",
       });
     },
   },
@@ -606,6 +611,13 @@ export const tools: Tool[] = [
           ...bool,
           description: "Move the pointer back where it was afterwards.",
         },
+        expectGeometry: {
+          ...str,
+          description:
+            'Geometry token from list_displays/find_elements taken when these coordinates ' +
+            'were measured. If the display layout has changed since, the action is refused ' +
+            'instead of landing on whatever moved underneath.',
+        },
       },
       required: ["x", "y"],
     },
@@ -617,7 +629,7 @@ export const tools: Tool[] = [
     description: "Moves the pointer without clicking — useful to trigger hover states. " + COORD_NOTE,
     inputSchema: {
       type: "object",
-      properties: { x: num, y: num },
+      properties: { x: num, y: num, expectGeometry: str },
       required: ["x", "y"],
     },
     handler: async (a) => json(await helper.send("move", a)),
@@ -639,6 +651,13 @@ export const tools: Tool[] = [
         button: { type: "string", enum: ["left", "right", "middle"] },
         steps: { ...num, description: "Intermediate move events. Default 25." },
         modifiers,
+        expectGeometry: {
+          ...str,
+          description:
+            'Geometry token from list_displays/find_elements taken when these coordinates ' +
+            'were measured. If the display layout has changed since, the action is refused ' +
+            'instead of landing on whatever moved underneath.',
+        },
       },
       required: ["fromX", "fromY", "toX", "toY"],
     },
@@ -659,6 +678,13 @@ export const tools: Tool[] = [
         dy: { ...num, description: "Vertical amount. Positive = up, negative = down." },
         units: { type: "string", enum: ["line", "pixel"], description: "Default line." },
         modifiers,
+        expectGeometry: {
+          ...str,
+          description:
+            'Geometry token from list_displays/find_elements taken when these coordinates ' +
+            'were measured. If the display layout has changed since, the action is refused ' +
+            'instead of landing on whatever moved underneath.',
+        },
       },
     },
     handler: async (a) => json(await helper.send("scroll", a)),

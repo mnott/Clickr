@@ -58,7 +58,7 @@ matters because they need different fixes:
 | trigger | what happens | fix |
 |---|---|---|
 | **Layout reflow** | a page inserts/removes chrome on interaction and everything below shifts | re-query after *every* state change; never batch coordinate clicks across an action that can reflow |
-| **Display geometry change** | an external display sleeps, or a VNC client reconnects at a different resolution, and every window moves | not yet solved — see *Known gaps* |
+| **Display geometry change** | an external display sleeps, or a VNC client reconnects at a different resolution, and every window moves | carry the `geometry` token from `list_displays`/`find_elements` into `click` as `expectGeometry` — a mismatch refuses the action |
 | **Occlusion** | a window capture composites the target unobstructed, so a coordinate read off it hits whatever is really on top | `screenshot` now warns, with covered-% and the covering app |
 
 The general rule: **treat a coordinate as valid only for the state you measured it in.**
@@ -225,12 +225,21 @@ Keystroke mode sends one key event per character at a 20 ms interval, which meas
 characters into a single event corrupts text at the batch boundary — both measured, not
 assumed. Use it for plain fields where you want realistic per-character input.
 
-## Known gaps
+## Guarding against stale coordinates
 
-- **No geometry generation counter.** A display resolution change silently invalidates
-  every cached coordinate, and a click made against stale geometry fails silently rather
-  than loudly. A generation token that `click` validated against would turn those into
-  visible errors. Not built.
+`list_displays` and `find_elements` both return a `geometry` token fingerprinting the
+current display layout. Pass it to `click`, `drag`, `scroll` or `move_mouse` as
+`expectGeometry`, and if the layout changed in between the action is **refused** instead
+of landing on whatever moved underneath:
+
+```
+refusing to act: the display layout changed since these coordinates were measured
+(expected geometry abc123, now 1akrqqsmw2kd6). Windows have moved, so this coordinate
+probably points at something else. Re-read list_displays and re-locate the target.
+```
+
+This covers the display-geometry trigger only. Layout reflow inside a page does not
+change display geometry, so nothing but re-querying protects against that one.
 
 ## Requirements and permissions
 

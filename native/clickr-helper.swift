@@ -142,6 +142,43 @@ func screenRecordingGranted() -> Bool {
     return CGPreflightScreenCaptureAccess()
 }
 
+/// Fingerprint of the current display layout.
+///
+/// Every coordinate clickr hands out is only meaningful for the layout it was measured
+/// in. When a display sleeps, or a VNC client reconnects at a different resolution,
+/// windows move and every cached coordinate silently points somewhere else — the click
+/// still "succeeds", at the wrong target. Callers can carry this token from the
+/// measurement to the click and have a mismatch fail loudly instead.
+func geometryToken() -> String {
+    let parts = displayList().map { d -> String in
+        let id = d["id"] as? Int ?? 0
+        let x = d["x"] as? Double ?? 0
+        let y = d["y"] as? Double ?? 0
+        let w = d["width"] as? Double ?? 0
+        let h = d["height"] as? Double ?? 0
+        let s = d["scale"] as? Double ?? 1
+        return "\(id):\(Int(x)),\(Int(y)),\(Int(w)),\(Int(h))@\(s)"
+    }
+    var hash: UInt64 = 5381
+    for byte in parts.joined(separator: "|").utf8 {
+        hash = (hash &* 33) ^ UInt64(byte)
+    }
+    return String(hash, radix: 36)
+}
+
+/// Rejects an action whose coordinates were measured against a different display layout.
+func verifyGeometry(_ obj: [String: Any]) throws {
+    guard let expected = obj["expectGeometry"] as? String, !expected.isEmpty else { return }
+    let actual = geometryToken()
+    if expected != actual {
+        throw HelperError(
+            "refusing to act: the display layout changed since these coordinates were "
+                + "measured (expected geometry \(expected), now \(actual)). Windows have moved, "
+                + "so this coordinate probably points at something else. Re-read list_displays "
+                + "and re-locate the target with find_elements.")
+    }
+}
+
 // MARK: - Windows
 
 func windowList(appFilter: String?, onScreenOnly: Bool, includeAllLayers: Bool) -> [[String: Any]] {
@@ -288,6 +325,7 @@ func windowUnderPoint(_ p: CGPoint) -> [String: Any]? {
 
 func doClick(_ obj: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try verifyGeometry(obj)
     let point = CGPoint(x: try req(obj, "x"), y: try req(obj, "y"))
     let (button, down, up, _) = mouseButton(obj["button"] as? String)
     let mods = flags(from: obj["modifiers"])
@@ -353,6 +391,7 @@ func doClick(_ obj: [String: Any]) throws -> [String: Any] {
 
 func doMove(_ obj: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try verifyGeometry(obj)
     let point = CGPoint(x: try req(obj, "x"), y: try req(obj, "y"))
     postMouse(.mouseMoved, point, .left, [])
     return ["x": point.x, "y": point.y]
@@ -360,6 +399,7 @@ func doMove(_ obj: [String: Any]) throws -> [String: Any] {
 
 func doDrag(_ obj: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try verifyGeometry(obj)
     let from = CGPoint(x: try req(obj, "fromX"), y: try req(obj, "fromY"))
     let to = CGPoint(x: try req(obj, "toX"), y: try req(obj, "toY"))
     let (button, down, up, dragged) = mouseButton(obj["button"] as? String)
@@ -384,6 +424,7 @@ func doDrag(_ obj: [String: Any]) throws -> [String: Any] {
 
 func doScroll(_ obj: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
+    try verifyGeometry(obj)
     if let x = num(obj["x"]), let y = num(obj["y"]) {
         postMouse(.mouseMoved, CGPoint(x: x, y: y), .left, [])
         usleep(30_000)
@@ -752,6 +793,10 @@ func doFindElements(_ obj: [String: Any]) throws -> [String: Any] {
     return [
         "app": app.localizedName ?? "", "pid": Int(pid), "scope": scope,
         "count": results.count, "truncated": truncated,
+        // Carry this to click as expectGeometry: if the display layout changed in
+        // between, these coordinates are stale and the click will refuse rather
+        // than land on whatever moved underneath.
+        "geometry": geometryToken(),
         "elements": results,
     ]
 }
@@ -1222,7 +1267,9 @@ func handle(_ obj: [String: Any]) throws -> [String: Any] {
     case "requestScreenRecording":
         return ["requested": CGRequestScreenCaptureAccess()]
     case "displays":
-        return ["displays": displayList()]
+        return ["displays": displayList(), "geometry": geometryToken()]
+    case "geometry":
+        return ["geometry": geometryToken()]
     case "windows":
         return ["windows": windowList(
             appFilter: obj["app"] as? String,
