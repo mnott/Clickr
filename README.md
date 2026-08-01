@@ -355,6 +355,10 @@ Consequence worth stating: rules are **not** duplicated across these surfaces. I
 change how clickr should be used, change `src/instructions.ts` or the tool description —
 not this file.
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ## Architecture
 
 - `src/` — the MCP server (TypeScript, stdio transport).
