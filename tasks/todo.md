@@ -1,9 +1,36 @@
 ## Continue
 
-> **Last session:** 0008 - 2026-08-01 - Direct Link Following, Mcp Refactoring, And V0.3.0 Release
-> **Paused at:** 2026-08-01T11:22:44.224Z
+<!-- pai:checkpoint authored="auto" session="0012 - 2026-08-02 - Shared Persistence Layer Via Json Store" session-id="0074c449-ce84-4ccd-a66d-57dc61b25ea5" ts="2026-08-02T22:12:29.679Z" -->
+
+> **Last session:** 0012 - 2026-08-02 - Shared Persistence Layer Via Json Store
+> **Paused at:** 2026-08-02T22:12:29.679Z
 >
-> Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr. Check the latest session note for details.
+> Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr
+>
+> Resume with: `claude --resume 0074c449-ce84-4ccd-a66d-57dc61b25ea5`
+
+_Automatic checkpoint — 2026-08-02T22:12:29.617Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+
+### What was being asked
+
+- I don't see anything running, so I assume it is done?
+
+### Working tree
+
+- Branch: `main`
+- HEAD: b66c7d9 docs: session checkpoint and remaining open items
+- 6 uncommitted path(s):
+
+```
+M native/clickr-helper.swift
+ M package.json
+ M src/instructions.ts
+ M src/tools.ts
+ M tasks/todo.md
+?? scripts/reflow-guard-test.mjs
+```
+
+<!-- /pai:checkpoint -->
 
 ---
 # Clickr — TODO
@@ -15,11 +42,27 @@ MIT. Registered in `~/.claude.json`; skill installed to `~/.claude/skills/Clickr
 
 **Open:**
 
-1. **Page reflow has no automatic guard.** The `geometry` token covers display changes
-   only. A page inserting a toolbar does not change display geometry, so nothing but
-   discipline (re-query, never batch across a state-changing click) catches it. Possibly
-   unfixable from clickr's side — it is the argument for using the Chrome extension's
-   `ref`s when the target is in a page.
+1. ~~**Page reflow has no automatic guard.**~~ **FIXED 2026-08-02** — and the old verdict
+   ("possibly unfixable from clickr's side") was wrong. `geometryToken()` is derived
+   purely from `displayList()` (id, origin, size, scale), so in-window reflow is
+   invisible to it by construction — that part was right. But `doClick` already called
+   `elementAtPoint(point)` *after* posting the event, to report `hitElement`. The same
+   call placed *before* the event turns a post-hoc description into a guard.
+   Shipped as opt-in `expectRole` / `expectTitle` on `click` and `drag`: clickr resolves
+   what is actually under the point and refuses on a mismatch. Opt-in because clickr's
+   niche (canvas, games, remote desktop) has no accessibility tree to assert against —
+   with no expectation passed, behaviour is byte-identical to before.
+   Not wired into `move_mouse` or `scroll`: neither can destroy state, and the failure
+   this came from was a click that deselected a file.
+   **Verified:** `scripts/reflow-guard-test.mjs` (`npm run test:reflow`), 7 cases. Against
+   a pre-fix binary rebuilt from HEAD, the two refusal cases fail — the click returns
+   `ok: true` with `hitElement.role: "AXWindow"` despite `expectRole: "AXCheckBox"`.
+   Against the fix, 7/7. Every click it posts is aimed at a window title bar, so the test
+   cannot alter app state.
+   `npm test` shows 1 failure ("unchanged region is not re-sent as an image") that is
+   **pre-existing** — reproduced on a clean baseline. Environmental: it captures
+   (0,0,400,200), a live terminal repainting between the two captures.
+   Uncommitted; ships with the next release alongside the README MIT line (item 3).
 2. **Custom web UIs may expose nothing to the accessibility tree.** LinkedIn's composer
    footer returned zero from `find_elements` and resolved only to the containing
    `AXWebArea`, forcing screenshot-and-measure. Worth checking whether a different AX
@@ -32,6 +75,18 @@ MIT. Registered in `~/.claude.json`; skill installed to `~/.claude/skills/Clickr
 so a malformed `~/.claude.json` would be replaced with a config containing only the `pai`
 entry. Also asked PAI to check AIBroker for the same pattern. Clickr guards this by
 throwing on unparseable config and backing up before every write.
+
+**AIBroker checked 2026-08-02:** it never writes `~/.claude.json`, so the exact bug does
+not apply, and the general pattern was already fixed in `89ee3ce` (`core/json-store.ts`
+treats "unreadable" as distinct from "empty", blocks writes, atomic + `.bak`). Two
+residual call sites remain on the old shape — `voice-config.json` and `sessions.json` in
+`core/persistence.ts`, via its local `safeReadJson`/`safeWriteJson`.
+
+**Fixed the same day:** those helpers now sit on `json-store`'s `loadJson`/`saveJson` — an
+unparseable file blocks writes (per file, sticky, cleared by a good read or `setAppDir`)
+and every write is atomic with a `.bak`. New `test/persistence.test.ts` pins it: 3 of its
+7 tests fail against the pre-fix file, all 7 pass after; suite 483/483. Left uncommitted
+in the AIBroker tree. Nothing further owed on the clickr side.
 
 
 ## RESOLVED 2026-08-01 — root cause measured, fixes implemented
@@ -142,3 +197,7 @@ SessionStart payloads). Matthias is investigating separately. Treat the items be
    on both sides, or every name containing é/à looks like a mismatch.
    (Also: `sha256sum *.mp4` breaks when a filename starts with `-` — use
    `find . -name '*.mp4' -print0 | xargs -0 sha256sum`.)
+
+---
+
+*Last updated: 2026-08-02T22:08:06.532Z*

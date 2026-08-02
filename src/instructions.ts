@@ -46,7 +46,7 @@ Caveat: a heavily custom web UI may not expose its controls to the accessibility
 
 Treat a coordinate as valid ONLY for the state you measured it in. Three things invalidate one silently, and all three look identical when they happen — the click lands somewhere plausible and nothing errors:
 
-  a. LAYOUT REFLOW — your own click inserts a toolbar and everything below shifts. Self-inflicted and fully avoidable: NEVER batch coordinate clicks across a state-changing action. Re-query instead; find_elements is cheap.
+  a. LAYOUT REFLOW — your own click inserts a toolbar and everything below shifts. The display layout is unchanged, so expectGeometry cannot see this. Guard it with expectRole/expectTitle on click and drag: clickr resolves what is actually under the point before posting the event and refuses on a mismatch. Pass them every time the coordinate came from find_elements — the role and title are right there in the result. That is a guard, not a licence to batch: still never batch coordinate clicks across a state-changing action, because a refusal costs a round-trip and re-querying is cheap.
   b. DISPLAY GEOMETRY CHANGE — a display sleeping or a VNC client reconnecting moves every window, at any moment. Carry the geometry token from list_displays or find_elements into click as expectGeometry, and a mismatch refuses the action instead of clicking whatever moved underneath.
   c. OCCLUSION — a window capture composites the target unobstructed, so a coordinate read off it can hit whatever is really on top. screenshot warns when this applies.
 

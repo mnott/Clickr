@@ -76,6 +76,32 @@ const COORD_NOTE =
   "coordinates. This is the same space the screenshot tool reports, so a value read " +
   "off a screenshot can be used here directly.";
 
+/**
+ * Guards against layout reflow, which expectGeometry structurally cannot see: inserting
+ * a toolbar shifts every control below it while the display layout stays identical.
+ * Asserting on what the coordinate should resolve to catches that; asserting on the
+ * display cannot. Opt-in, because the surfaces clickr exists for — canvas, games,
+ * remote desktop — expose no accessibility tree to assert against.
+ */
+const expectTarget = {
+  expectRole: {
+    ...str,
+    description:
+      'AX role the target should still have, as reported by find_elements ("AXButton"; ' +
+      '"button" is accepted too). The element under the point is checked BEFORE the ' +
+      'event is posted and the action is refused on a mismatch. Pass this whenever the ' +
+      'coordinate came from find_elements — it is the only guard against a page ' +
+      'reflowing between the lookup and the click, which expectGeometry cannot detect.',
+  },
+  expectTitle: {
+    ...str,
+    description:
+      "Text the target should still carry — matched case-insensitively as a substring " +
+      "of its title, description or value (or its parent's). Combine with expectRole " +
+      "to pin down which control, not merely which kind.",
+  },
+} as const;
+
 export const tools: Tool[] = [
   {
     name: "check_permissions",
@@ -618,6 +644,7 @@ export const tools: Tool[] = [
             'were measured. If the display layout has changed since, the action is refused ' +
             'instead of landing on whatever moved underneath.',
         },
+        ...expectTarget,
       },
       required: ["x", "y"],
     },
@@ -658,6 +685,7 @@ export const tools: Tool[] = [
             'were measured. If the display layout has changed since, the action is refused ' +
             'instead of landing on whatever moved underneath.',
         },
+        ...expectTarget,
       },
       required: ["fromX", "fromY", "toX", "toY"],
     },

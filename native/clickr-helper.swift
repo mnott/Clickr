@@ -179,6 +179,86 @@ func verifyGeometry(_ obj: [String: Any]) throws {
     }
 }
 
+/// Rejects an action whose target control is no longer under the coordinate.
+///
+/// expectGeometry catches the display moving. It cannot catch layout reflow INSIDE a
+/// window: when a page inserts a toolbar and shifts everything below it, the display
+/// layout is byte-identical, so the token still matches while every coordinate below
+/// the insertion point now names a different control. Checking what is actually under
+/// the point before the event is posted closes that gap — the same elementAtPoint the
+/// click already reports afterwards, moved to where it can still prevent the click
+/// rather than merely describe it.
+///
+/// Opt-in, because clickr's own niche is surfaces with no accessibility tree at all
+/// (canvas, games, remote desktop). A caller that measured with find_elements has a
+/// role and a title to assert on and should pass them; a caller pixel-hunting a game
+/// has neither and passes nothing. Given an expectation, a point with no element is
+/// itself a mismatch — there was one there when it was measured.
+func verifyTarget(_ obj: [String: Any], at p: CGPoint) throws {
+    let wantRole = (obj["expectRole"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    let wantTitle = (obj["expectTitle"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    guard wantRole != nil || wantTitle != nil else { return }
+
+    // AX roles are conventionally prefixed; accept "button" for "AXButton" so the
+    // check does not fail over a spelling the caller cannot be expected to guess.
+    func normalise(_ s: String) -> String {
+        var v = s.lowercased()
+        if v.hasPrefix("ax") { v = String(v.dropFirst(2)) }
+        return v
+    }
+
+    guard let hit = elementAtPoint(p) else {
+        throw HelperError(
+            "refusing to act: nothing in the accessibility tree at "
+                + "(\(Int(p.x)), \(Int(p.y))), but a target was expected there. The layout "
+                + "has changed since these coordinates were measured. Re-locate with "
+                + "find_elements.")
+    }
+    let parent = hit["parent"] as? [String: Any]
+
+    if let want = wantRole {
+        // The hit often lands on inner text whose parent carries the real role, so a
+        // match on either is a match — same fallback elementAtPoint uses for labels.
+        let roles = [hit["role"] as? String, parent?["role"] as? String]
+            .compactMap { $0 }.map(normalise)
+        if !roles.contains(normalise(want)) {
+            // Report the role as the tree spells it, not as normalised for comparison,
+            // so the message can be pasted straight back as the corrected expectation.
+            let actual = (hit["role"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            throw HelperError(
+                "refusing to act: expected a \(want) at (\(Int(p.x)), \(Int(p.y))) but "
+                    + "found \(actual.map { "a \($0)" } ?? "nothing recognisable")"
+                    + "\(describeHit(hit)). The layout reflowed since these coordinates "
+                    + "were measured — re-locate with find_elements.")
+        }
+    }
+
+    if let want = wantTitle {
+        let texts = [
+            hit["title"] as? String, hit["description"] as? String, hit["value"] as? String,
+            parent?["title"] as? String, parent?["description"] as? String,
+        ].compactMap { $0 }.map { $0.lowercased() }
+        if !texts.contains(where: { $0.contains(want.lowercased()) }) {
+            let found = describeHit(hit)
+            throw HelperError(
+                "refusing to act: expected \"\(want)\" at (\(Int(p.x)), \(Int(p.y))) but "
+                    + "found \(found.isEmpty ? "an unlabelled element" : "one" + found)"
+                    + ". The layout reflowed since these coordinates were measured — "
+                    + "re-locate with find_elements.")
+        }
+    }
+}
+
+/// The label part of a mismatch message, so the caller sees what is actually there.
+func describeHit(_ hit: [String: Any]) -> String {
+    for key in ["title", "description", "value"] {
+        if let v = hit[key] as? String, !v.isEmpty {
+            return " labelled \"\(v.count > 60 ? String(v.prefix(60)) + "…" : v)\""
+        }
+    }
+    return ""
+}
+
 // MARK: - Windows
 
 func windowList(appFilter: String?, onScreenOnly: Bool, includeAllLayers: Bool) -> [[String: Any]] {
@@ -327,6 +407,7 @@ func doClick(_ obj: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
     try verifyGeometry(obj)
     let point = CGPoint(x: try req(obj, "x"), y: try req(obj, "y"))
+    try verifyTarget(obj, at: point)
     let (button, down, up, _) = mouseButton(obj["button"] as? String)
     let mods = flags(from: obj["modifiers"])
     let count = max(1, min(3, Int(num(obj["count"]) ?? 1)))
@@ -402,6 +483,9 @@ func doDrag(_ obj: [String: Any]) throws -> [String: Any] {
     try verifyGeometry(obj)
     let from = CGPoint(x: try req(obj, "fromX"), y: try req(obj, "fromY"))
     let to = CGPoint(x: try req(obj, "toX"), y: try req(obj, "toY"))
+    // The grab point is the one that must still be the intended control; where it is
+    // dropped is checked by the caller reading the result.
+    try verifyTarget(obj, at: from)
     let (button, down, up, dragged) = mouseButton(obj["button"] as? String)
     let mods = flags(from: obj["modifiers"])
     let steps = max(2, min(200, Int(num(obj["steps"]) ?? 25)))
