@@ -40,7 +40,9 @@ An image costs roughly (width*height)/750 tokens AND stays in the conversation, 
   - read_text runs on-device OCR over a region and returns text only, no image. For canvas, video, remote desktop, or anything the accessibility tree cannot see.
   - click already reports the element it hit, so verifying a click rarely needs a capture.
 
-Caveat: a heavily custom web UI may not expose its controls to the accessibility tree at all. If find_elements returns nothing where you can plainly see a control, fall back to screenshot and measure — but capture a tight region rather than a display. Regions up to 800 points come back at 1:1, one image pixel per point, which is the reliable way to measure precisely. Re-capturing an unchanged region returns a text note instead of a duplicate image.
+IN A WEB PAGE OR AN ELECTRON APP, PASS webContent:true. The walk is breadth-first and the browser's own toolbar, tabs and menu bar sit above the page, so a search for a role the browser also uses — AXButton, AXGroup, AXTextField — spends the entire result cap on chrome before reaching the page. Measured on a live Chrome window: role AXButton under the defaults returned 40 elements, not one of them in the page, while the page held 3472 reachable nodes. The failure is indistinguishable from the page exposing nothing, which is exactly why it gets misdiagnosed. webContent:true starts at the page instead. Also check the \`truncated\` flag and the \`note\` that comes with it — a capped result is a partial answer wearing the costume of a complete one.
+
+Caveat: a heavily custom web UI may still not expose its controls. If webContent:true reports 'webContent (none found)', or finds the area but not your control, fall back to screenshot and measure — but capture a tight region rather than a display. Regions up to 800 points come back at 1:1, one image pixel per point, which is the reliable way to measure precisely. Re-capturing an unchanged region returns a text note instead of a duplicate image.
 
 ## Stale coordinates are the main hazard
 

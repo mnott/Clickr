@@ -25,6 +25,7 @@
     "test": "node scripts/smoke-test.mjs",
     "test:functional": "node scripts/functional-test.mjs",
     "test:reflow": "node scripts/reflow-guard-test.mjs",
+    "test:webcontent": "node scripts/webcontent-test.mjs",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },

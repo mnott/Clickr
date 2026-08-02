@@ -1,33 +1,33 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0012 - 2026-08-02 - Shared Persistence Layer Via Json Store" session-id="0074c449-ce84-4ccd-a66d-57dc61b25ea5" ts="2026-08-02T22:12:29.679Z" -->
+<!-- pai:checkpoint authored="auto" session="0013 - 2026-08-02 - New Session" session-id="0074c449-ce84-4ccd-a66d-57dc61b25ea5" ts="2026-08-02T22:20:54.874Z" -->
 
-> **Last session:** 0012 - 2026-08-02 - Shared Persistence Layer Via Json Store
-> **Paused at:** 2026-08-02T22:12:29.679Z
+> **Last session:** 0013 - 2026-08-02 - New Session
+> **Paused at:** 2026-08-02T22:20:54.874Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr
 >
 > Resume with: `claude --resume 0074c449-ce84-4ccd-a66d-57dc61b25ea5`
 
-_Automatic checkpoint — 2026-08-02T22:12:29.617Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+_Automatic checkpoint — 2026-08-02T22:20:54.832Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
 
 ### What was being asked
 
 - I don't see anything running, so I assume it is done?
+- [Task:comment] so then if nothing is open, cpp and close it  (comment on "Page reflow can still move a click target — geometry token does not cover it")  [todoist:6h9mQQmHc6XJh78h in:6h9pfjFPPh382rrr]
+- [Task:comment] is this still open? if so fix ti  (comment on "Clickr: investigate AX traversal for custom web UIs")  [todoist:6h9pfgjFGRmqWw9h in:6h9pfjFPPh382rrr]
 
 ### Working tree
 
 - Branch: `main`
-- HEAD: b66c7d9 docs: session checkpoint and remaining open items
-- 6 uncommitted path(s):
+- HEAD: 45272e2 docs: record 0.4.0 shipping the reflow guard and the MIT line
+- 4 uncommitted path(s):
 
 ```
 M native/clickr-helper.swift
- M package.json
  M src/instructions.ts
  M src/tools.ts
  M tasks/todo.md
-?? scripts/reflow-guard-test.mjs
 ```
 
 <!-- /pai:checkpoint -->
@@ -64,10 +64,30 @@ MIT. Registered in `~/.claude.json`; skill installed to `~/.claude/skills/Clickr
    (0,0,400,200), a live terminal repainting between the two captures. Still open, and
    not worth chasing without a stable capture target.
    **Shipped in 0.4.0** (`ae1f51b`), published to npm 2026-08-03.
-2. **Custom web UIs may expose nothing to the accessibility tree.** LinkedIn's composer
-   footer returned zero from `find_elements` and resolved only to the containing
-   `AXWebArea`, forcing screenshot-and-measure. Worth checking whether a different AX
-   traversal (e.g. not stopping at `AXWebArea`) would reach those controls.
+2. ~~**Custom web UIs may expose nothing to the accessibility tree.**~~ **FIXED
+   2026-08-03 — and the diagnosis in this item was wrong twice over.**
+   The hypothesis was that the walk "stops at `AXWebArea`". It does not: `walkElements`
+   is a plain BFS over `kAXChildrenAttribute` and never special-cases any role. And the
+   page was not missing from the tree — measured on a live Chrome window, the page had
+   **3472 reachable nodes** below the web area, untruncated.
+   The real cause is **BFS order against `maxResults`**. A browser's toolbar, tab bar and
+   menu bar sit *above* the page, so a search for a role the browser also uses for its
+   own controls fills the cap with chrome and stops before reaching the page. Measured:
+   `role: "AXButton"` under the defaults returned **40 elements, none of them in the
+   page**. `role: "AXLink"` worked only because browser chrome has no links — which is
+   why this looked like "some pages expose nothing" rather than a systematic ordering
+   bug. `truncated: true` was set, but a bare boolean next to 40 plausible results is
+   easy to read as "close enough".
+   Fixed with `webContent: true` on `find_elements`: locates the `AXWebArea` roots with a
+   shallow walk and starts the search there, skipping chrome instead of out-running it.
+   Same query with the flag returns 40 genuine page controls. Truncation now also carries
+   a `note` saying what to do, and the tool description no longer advises "filter harder
+   rather than raising maxResults" — that advice caused the bug when the filter was a
+   role the chrome shares.
+   **Verified:** `scripts/webcontent-test.mjs` (`npm run test:webcontent`), 6 cases,
+   including honest degradation (`webContent (none found)` on Finder) and a no-flag
+   regression check. Skips cleanly when no browser is running. Read-only — `find_elements`
+   posts no events.
 3. ~~The README's MIT line landed after the 0.3.0 publish, so the tarball copy is one
    line behind.~~ **CLOSED** — went out with 0.4.0 on 2026-08-03.
 
@@ -201,4 +221,4 @@ SessionStart payloads). Matthias is investigating separately. Treat the items be
 
 ---
 
-*Last updated: 2026-08-02T22:08:06.532Z*
+*Last updated: 2026-08-02T22:15:51.436Z*

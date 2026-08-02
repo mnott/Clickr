@@ -831,6 +831,39 @@ func walkElements(root: AXUIElement, filter: ElementFilter,
     return (results, truncated)
 }
 
+/// Every AXWebArea in a subtree — the roots of rendered page content.
+///
+/// A browser's toolbar, tab bar and menu bar sit ABOVE the page in the tree, so a
+/// breadth-first walk reaches all of them before the first page node. With the default
+/// maxResults of 40 a search for any role the browser also uses for its own controls —
+/// AXButton, AXGroup, AXTextField — fills up entirely with browser chrome and stops
+/// before the page. That reads exactly like "this page exposes nothing to
+/// accessibility", which is what makes it worth a dedicated entry point: measured on a
+/// live Chrome window, role AXButton under the defaults returned 40 elements, none of
+/// them below the web area, while the page in fact had 3472 reachable nodes.
+///
+/// Starting the walk at the web areas skips the chrome rather than out-running it.
+func webAreaRoots(_ root: AXUIElement, maxDepth: Int, nodeBudget: Int) -> [AXUIElement] {
+    var found: [AXUIElement] = []
+    var queue: [(AXUIElement, Int)] = [(root, 0)]
+    var visited = 0
+    while !queue.isEmpty {
+        let (el, depth) = queue.removeFirst()
+        visited += 1
+        if visited > nodeBudget { break }
+        if axStr(el, kAXRoleAttribute as String) == "AXWebArea" {
+            // Do not descend further here; the caller walks this subtree itself.
+            found.append(el)
+            continue
+        }
+        if depth >= maxDepth { continue }
+        if let children = axCopy(el, kAXChildrenAttribute as String) as? [AXUIElement] {
+            for child in children { queue.append((child, depth + 1)) }
+        }
+    }
+    return found
+}
+
 func doFindElements(_ obj: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
     let app = try findApp(obj)
@@ -870,11 +903,29 @@ func doFindElements(_ obj: [String: Any]) throws -> [String: Any] {
         scope = matchedBy
     }
 
-    let (results, truncated) = walkElements(
-        root: root, filter: filter, maxDepth: maxDepth,
-        maxResults: maxResults, nodeBudget: nodeBudget)
+    var results: [[String: Any]] = []
+    var truncated = false
 
-    return [
+    if obj["webContent"] as? Bool ?? false {
+        // Locating the web areas is a shallow walk: they sit just under the window,
+        // well above the page's own depth, so this costs a fraction of the full tree.
+        let areas = webAreaRoots(root, maxDepth: 15, nodeBudget: 4000)
+        for area in areas {
+            if results.count >= maxResults { truncated = true; break }
+            let (r, t) = walkElements(
+                root: area, filter: filter, maxDepth: maxDepth,
+                maxResults: maxResults - results.count, nodeBudget: nodeBudget)
+            results.append(contentsOf: r)
+            truncated = truncated || t
+        }
+        scope = areas.isEmpty ? "webContent (none found)" : "webContent (\(areas.count) area(s))"
+    } else {
+        (results, truncated) = walkElements(
+            root: root, filter: filter, maxDepth: maxDepth,
+            maxResults: maxResults, nodeBudget: nodeBudget)
+    }
+
+    var out: [String: Any] = [
         "app": app.localizedName ?? "", "pid": Int(pid), "scope": scope,
         "count": results.count, "truncated": truncated,
         // Carry this to click as expectGeometry: if the display layout changed in
@@ -883,6 +934,20 @@ func doFindElements(_ obj: [String: Any]) throws -> [String: Any] {
         "geometry": geometryToken(),
         "elements": results,
     ]
+    // A truncated result is indistinguishable from an exhaustive one once it is a list
+    // of coordinates, and the usual cause in a browser is that the cap was spent on
+    // chrome. Say so, rather than leaving a bare boolean to be noticed.
+    if truncated {
+        out["note"] =
+            "results were capped — this is NOT everything that matches. "
+            + (obj["webContent"] as? Bool ?? false
+                ? "Raise maxResults, or narrow with titleContains or region."
+                : "In a browser or Electron app the cap is usually spent on the app's own "
+                    + "toolbar and tabs before the walk reaches the page: retry with "
+                    + "webContent:true to start at the page instead, or narrow with "
+                    + "titleContains, region or windowId.")
+    }
+    return out
 }
 
 /// What is actually under a point — the cheap way to confirm a click target or a

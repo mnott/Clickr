@@ -457,8 +457,13 @@ export const tools: Tool[] = [
       "conversation forever. Works for native apps and for web pages in Chrome/Safari, " +
       "which expose the DOM as accessibility elements.\n\n" +
       "Filter by role (AXButton, AXTextField, AXCheckBox, AXLink, AXMenuItem, ...) and/or " +
-      "titleContains. Narrow with windowId when an app has several windows. If results are " +
-      "truncated, filter harder rather than raising maxResults.",
+      "titleContains. Narrow with windowId when an app has several windows.\n\n" +
+      "LOOKING FOR SOMETHING INSIDE A WEB PAGE? Pass webContent:true. The search is " +
+      "breadth-first and a browser's toolbar, tabs and menu bar sit above the page, so a " +
+      "plain search for a role the browser also uses for its own controls (AXButton, " +
+      "AXGroup, AXTextField) spends the whole result cap on browser chrome and never " +
+      "reaches the page — which looks identical to the page exposing nothing. " +
+      "webContent:true starts the walk at the page's web areas instead.",
     inputSchema: {
       type: "object",
       properties: {
@@ -490,6 +495,16 @@ export const tools: Tool[] = [
           description: "Only elements intersecting this rectangle of global points.",
           properties: { x: num, y: num, width: num, height: num },
           required: ["x", "y", "width", "height"],
+        },
+        webContent: {
+          ...bool,
+          description:
+            "Start the search at the page's web areas instead of the application root, " +
+            "skipping the browser's own toolbar, tabs and menu bar. Use this for anything " +
+            "inside a web page or an Electron app. Reported depths become relative to the " +
+            "page. If it finds no web area, scope comes back 'webContent (none found)' — " +
+            "then the content genuinely is not in the accessibility tree, and a tight " +
+            "screenshot region is the fallback.",
         },
         maxResults: { ...num, description: "Cap on returned elements. Default 40." },
         maxDepth: { ...num, description: "Tree depth limit. Default 18." },
