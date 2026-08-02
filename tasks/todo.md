@@ -61,14 +61,15 @@ MIT. Registered in `~/.claude.json`; skill installed to `~/.claude/skills/Clickr
    cannot alter app state.
    `npm test` shows 1 failure ("unchanged region is not re-sent as an image") that is
    **pre-existing** — reproduced on a clean baseline. Environmental: it captures
-   (0,0,400,200), a live terminal repainting between the two captures.
-   Uncommitted; ships with the next release alongside the README MIT line (item 3).
+   (0,0,400,200), a live terminal repainting between the two captures. Still open, and
+   not worth chasing without a stable capture target.
+   **Shipped in 0.4.0** (`ae1f51b`), published to npm 2026-08-03.
 2. **Custom web UIs may expose nothing to the accessibility tree.** LinkedIn's composer
    footer returned zero from `find_elements` and resolved only to the containing
    `AXWebArea`, forcing screenshot-and-measure. Worth checking whether a different AX
    traversal (e.g. not stopping at `AXWebArea`) would reach those controls.
-3. The README's MIT line landed after the 0.3.0 publish, so the tarball copy is one line
-   behind. Rides along with the next release; no action needed.
+3. ~~The README's MIT line landed after the 0.3.0 publish, so the tarball copy is one
+   line behind.~~ **CLOSED** — went out with 0.4.0 on 2026-08-03.
 
 **Handed to PAI, awaiting their side:** a data-loss bug in PAI's `mcp.ts` —
 `readClaudeJson()` returns `{}` on a parse error and `writeClaudeJson()` then overwrites,
