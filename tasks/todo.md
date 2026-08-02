@@ -1,9 +1,9 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0014 - 2026-08-02 - Page Scoped Search As Parameter" ts="2026-08-02T22:28:33.257Z" -->
+<!-- pai:checkpoint authored="auto" session="0014 - 2026-08-02 - Webcontent Feature Implementation And Release" ts="2026-08-02T22:42:55.309Z" -->
 
-> **Last session:** 0014 - 2026-08-02 - Page Scoped Search As Parameter
-> **Paused at:** 2026-08-02T22:28:33.257Z
+> **Last session:** 0014 - 2026-08-02 - Webcontent Feature Implementation And Release
+> **Paused at:** 2026-08-02T22:42:55.309Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr
 
@@ -69,6 +69,15 @@ MIT. Registered in `~/.claude.json`; skill installed to `~/.claude/skills/Clickr
    posts no events.
 3. ~~The README's MIT line landed after the 0.3.0 publish, so the tarball copy is one
    line behind.~~ **CLOSED** — went out with 0.4.0 on 2026-08-03.
+
+**RESOLVED BY PAI 2026-08-03** — verified in their tree, not taken on trust. Commit
+`de673b5` ("stop pai mcp/daemon install from wiping ~/.claude.json") lifted the logic
+out of `mcp.ts` and `daemon.ts`, where it was duplicated, into `src/config/claude-json.ts`.
+A missing file still yields `{}` (legitimate first run); malformed or unreadable now
+throws instead of returning `{}`; writes back up to `~/.claude.json.bak-pai` and go
+temp-file + rename so a crash cannot truncate. Both call sites import the shared module —
+no residual `catch { return {} }` in either. `src/config/claude-json.test.ts` 6/6.
+Original report, for context:
 
 **Handed to PAI, awaiting their side:** a data-loss bug in PAI's `mcp.ts` —
 `readClaudeJson()` returns `{}` on a parse error and `writeClaudeJson()` then overwrites,
@@ -200,4 +209,4 @@ SessionStart payloads). Matthias is investigating separately. Treat the items be
 
 ---
 
-*Last updated: 2026-08-02T22:28:33.258Z*
+*Last updated: 2026-08-02T22:42:55.310Z*
