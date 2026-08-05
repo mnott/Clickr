@@ -11,6 +11,14 @@
  */
 export const INSTRUCTIONS = `clickr drives this Mac's screen and input devices directly: it captures any display region and posts real mouse and keyboard events, so it can operate any application without that application exposing a scripting interface.
 
+## Control handover — read this before touching anything
+
+The actuating tools (click, move_mouse, drag, scroll, type_text, press_key, activate_app, set_window_bounds, set_clipboard) only work once the operator has explicitly handed control to the agent — by saying "your controls" out loud, or by running \`clickr controls you\` in a terminal. When the operator says that, call the \`controls\` tool with holder:"agent" to record it — do this ONLY in direct response to the operator saying so, never on your own initiative, since that would defeat the entire point of the gate. Calling an actuating tool before that returns an error explaining the operator must hand over first; read-only tools (screenshot, find_elements, read_text, list_windows, list_displays, list_apps, element_at, get_mouse_position, get_clipboard, check_permissions) always work regardless of who holds control.
+
+A grant lapses on its own after a period of inactivity, so a session that has been idle a while may need a fresh handover even if one happened earlier. When the operator says "my controls" (or runs \`clickr controls me\`), call \`controls\` with holder:"user" and stop touching the mouse and keyboard immediately.
+
+Every actuating call must also include a \`step\`: one short plain-English sentence saying what this call is about to do and why. Calls missing it are rejected — the sentence is shown to the operator alongside the result and logged, so it is how they follow what you are doing to their machine.
+
 ## Choosing how to drive the computer
 
 FIRST ASK: is the visible interaction itself what the user wants? If they asked to be shown something — "show me how to do a pivot table in Excel", "walk me through this dialog" — use clickr directly. Watching it happen is the deliverable, and doing it headlessly with a script misses the request entirely.

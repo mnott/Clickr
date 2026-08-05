@@ -6,6 +6,7 @@ import {
   unionOfDisplays,
   type Rect,
 } from "./capture.js";
+import { grantToAgent, returnToUser } from "./controls.js";
 import { getDisplays, getWindows, helper } from "./helper.js";
 
 type Content =
@@ -922,5 +923,48 @@ export const tools: Tool[] = [
       required: ["text"],
     },
     handler: async (a) => json(await helper.send("clipset", a)),
+  },
+
+  {
+    name: "controls",
+    description:
+      "Records a control handover between the operator and the agent for clickr's actuating " +
+      "tools (click, move_mouse, drag, scroll, type_text, press_key, activate_app, " +
+      "set_window_bounds, set_clipboard). Call this ONLY to reflect a handover the operator " +
+      "has JUST spoken in this conversation -- \"your controls\" means holder:'agent', " +
+      "\"my controls\" means holder:'user'. NEVER call it on your own initiative to unlock " +
+      "the actuating tools for yourself; that defeats the entire point of the gate. " +
+      "This is a clarity mechanism, not a security boundary -- the operator can already run " +
+      "`clickr controls you`/`clickr controls me` directly from a terminal, and any grant to " +
+      "the agent lapses on its own after a period of inactivity. Read-only tools (screenshot, " +
+      "find_elements, read_text, list_windows, ...) are never affected by this and always work.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        holder: {
+          type: "string",
+          enum: ["agent", "user"],
+          description:
+            "'agent' hands the actuating tools to the agent (the operator said \"your " +
+            "controls\"). 'user' returns them to the operator (the operator said \"my " +
+            "controls\").",
+        },
+        note: { ...str, description: "Optional short note recorded with the handover." },
+      },
+      required: ["holder"],
+    },
+    handler: async (a) => {
+      if (a.holder !== "agent" && a.holder !== "user") {
+        throw new Error('holder must be "agent" or "user".');
+      }
+      const state = a.holder === "agent" ? grantToAgent(a.note) : returnToUser(a.note);
+      const lines = [
+        `Controls: ${state.holder === "agent" ? "AGENT" : "OPERATOR"}`,
+        `since: ${state.since}`,
+      ];
+      if (state.until) lines.push(`until: ${state.until}`);
+      if (state.note) lines.push(`note: ${state.note}`);
+      return text(lines.join("\n"));
+    },
   },
 ];

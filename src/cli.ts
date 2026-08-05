@@ -12,6 +12,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { grantToAgent, readControls, returnToUser } from "./controls.js";
+import { readLastSteps } from "./steps.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const claudeJsonPath = join(homedir(), ".claude.json");
@@ -269,6 +271,52 @@ function doctor() {
   }
 }
 
+function controls(sub: string | undefined, note: string | undefined) {
+  switch (sub) {
+    case "you": {
+      const state = grantToAgent(note);
+      console.log(c.ok(`controls handed to the agent — expires ${state.until}`));
+      if (note) console.log(c.dim(`  note: ${note}`));
+      break;
+    }
+    case "me": {
+      const state = returnToUser(note);
+      console.log(c.ok(`controls returned to the operator (${state.since})`));
+      if (note) console.log(c.dim(`  note: ${note}`));
+      break;
+    }
+    case undefined:
+    case "status": {
+      const state = readControls();
+      console.log(c.bold("clickr controls"));
+      console.log();
+      console.log(`holder: ${state.holder === "agent" ? c.warn("agent") : c.ok("operator")}`);
+      console.log(c.dim(`since:  ${state.since}`));
+      if (state.until) console.log(c.dim(`until:  ${state.until}`));
+      if (state.note) console.log(c.dim(`note:   ${state.note}`));
+      break;
+    }
+    default:
+      console.log(c.bad(`unknown "clickr controls ${sub}"`));
+      console.log();
+      console.log("  clickr controls you [note]      hand the controls to the agent");
+      console.log("  clickr controls me [note]       return the controls to the operator");
+      console.log("  clickr controls [status]        show who currently holds the controls");
+      process.exit(1);
+  }
+}
+
+function steps(nArg: string | undefined) {
+  const parsed = nArg !== undefined ? parseInt(nArg, 10) : 20;
+  const n = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
+  const lines = readLastSteps(n);
+  if (!lines.length) {
+    console.log(c.dim("no steps logged yet"));
+    return;
+  }
+  for (const line of lines) console.log(line);
+}
+
 const command = process.argv[2];
 try {
   switch (command) {
@@ -277,13 +325,19 @@ try {
     case "remove": uninstall(); break;
     case "status": status(); break;
     case "doctor": doctor(); break;
+    case "controls": controls(process.argv[3], process.argv[4]); break;
+    case "steps": steps(process.argv[3]); break;
     default:
       console.log("clickr — macOS screen measurement and input control for Claude Code");
       console.log();
-      console.log("  clickr install     build, register with Claude Code, install the skill");
-      console.log("  clickr uninstall   remove the registration");
-      console.log("  clickr status      show registration and permission status");
-      console.log("  clickr doctor      diagnose a broken install");
+      console.log("  clickr install                  build, register with Claude Code, install the skill");
+      console.log("  clickr uninstall                remove the registration");
+      console.log("  clickr status                   show registration and permission status");
+      console.log("  clickr doctor                   diagnose a broken install");
+      console.log("  clickr controls you [note]      hand the controls to the agent");
+      console.log("  clickr controls me [note]       return the controls to the operator");
+      console.log("  clickr controls [status]        show who currently holds the controls");
+      console.log("  clickr steps [n]                print the last n logged agent steps (default 20)");
       console.log();
       console.log(c.dim("  The MCP server itself is started by Claude Code, not by hand."));
       if (command) process.exit(1);

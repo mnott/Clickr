@@ -1,13 +1,35 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0014 - 2026-08-02 - Webcontent Feature Implementation And Release" ts="2026-08-02T22:42:55.309Z" -->
+<!-- pai:checkpoint authored="auto" session="0014 - 2026-08-02 - Webcontent Implementation, Npm Release, And Verification" session-id="253fea3f-c5db-469c-862b-a7cf4e61734a" ts="2026-08-05T19:26:25.945Z" -->
 
-> **Last session:** 0014 - 2026-08-02 - Webcontent Feature Implementation And Release
-> **Paused at:** 2026-08-02T22:42:55.309Z
+> **Last session:** 0014 - 2026-08-02 - Webcontent Implementation, Npm Release, And Verification
+> **Paused at:** 2026-08-05T19:26:25.945Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr
+>
+> Resume with: `claude --resume 253fea3f-c5db-469c-862b-a7cf4e61734a`
 
-Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr
+_Automatic checkpoint — 2026-08-05T19:26:25.916Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+
+### What was being asked
+
+- [Task] A discussion was archived from the tracker — 2 comments on "Clickr: page reflow has no automatic guard".  Filed provisionally at: /Users/i052341/Daten/Cloud/Development/ai/clickr/Notes/tasks/cl…
+
+### Working tree
+
+- Branch: `main`
+- HEAD: 380edf9 docs: PAI resolved the ~/.claude.json wipe; record the verification
+- 7 uncommitted path(s):
+
+```
+M src/cli.ts
+ M src/index.ts
+ M src/instructions.ts
+ M src/tools.ts
+ M tasks/todo.md
+?? src/controls.ts
+?? src/steps.ts
+```
 
 <!-- /pai:checkpoint -->
 
@@ -209,4 +231,4 @@ SessionStart payloads). Matthias is investigating separately. Treat the items be
 
 ---
 
-*Last updated: 2026-08-02T22:42:55.310Z*
+*Last updated: 2026-08-02T22:43:15.373Z*
