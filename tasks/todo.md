@@ -1,40 +1,85 @@
 ## Continue
 
-<!-- pai:checkpoint authored="auto" session="0014 - 2026-08-02 - Webcontent Implementation, Npm Release, And Verification" session-id="253fea3f-c5db-469c-862b-a7cf4e61734a" ts="2026-08-05T19:26:25.945Z" -->
+<!-- pai:checkpoint authored="model" session="0015 - 2026-08-13 - Token Grant Duration Refresh Bug, Build Setup" session-id="d0302abc-92eb-4cc4-8dc3-519fc005f39e" ts="2026-08-13T17:05:49.163Z" -->
 
-> **Last session:** 0014 - 2026-08-02 - Webcontent Implementation, Npm Release, And Verification
-> **Paused at:** 2026-08-05T19:26:25.945Z
+> **Last session:** 0015 - 2026-08-13 - Token Grant Duration Refresh Bug, Build Setup
+> **Paused at:** 2026-08-13T17:05:49.163Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr
 >
-> Resume with: `claude --resume 253fea3f-c5db-469c-862b-a7cf4e61734a`
+> Resume with: `claude --resume d0302abc-92eb-4cc4-8dc3-519fc005f39e`
 
-_Automatic checkpoint — 2026-08-05T19:26:25.916Z. Written without the model, from the transcript and the working tree. A model-authored checkpoint replaces this; it is here so an interrupted session still leaves something._
+**Session focus:** made clickr's control-grant lapse window settable at handover time.
+Everything below is uncommitted on `main`, on top of `a6d45d3`.
 
-### What was being asked
+### Landed in the working tree (nothing committed, nothing published)
 
-- [Task] A discussion was archived from the tracker — 2 comments on "Clickr: page reflow has no automatic guard".  Filed provisionally at: /Users/i052341/Daten/Cloud/Development/ai/clickr/Notes/tasks/cl…
+Grant window is now 30 minutes of idle by default and overridable per handover, capped at
+24 hours:
 
-### Working tree
+- `src/controls.ts` — `ControlsState.minutes` persists the window on the grant;
+  `normalizeGrantMinutes()` (clamp 1..1440), `formatGrantMinutes()`, `parseGrantDuration()`
+  (anchored parse of "for 6 hours" / "6h" / "90m" / "an hour" / "für 6 Stunden", returning
+  the remainder as the note). `refreshGrant()` no longer takes a `minutes` argument — it
+  reads the window off the grant. `handoverMessage()` reports the real window, not a
+  hardcoded 30.
+- `src/hook.ts` — `lastHandover()` now returns the text after the phrase so the hook can
+  parse an attached window; confirmation line names it.
+- `src/cli.ts` — `clickr controls you for 6 hours` / `clickr controls you 6h <note>`;
+  argv after the subcommand is rejoined and fed to the same parser as the spoken form.
+  `controls status` prints the window. Usage text updated.
+- `src/tools.ts` — `controls` tool gained a `minutes` parameter (+ description).
+- `src/instructions.ts`, `README.md` — documented.
+- `package.json` — new `test:controls` script.
 
-- Branch: `main`
-- HEAD: 380edf9 docs: PAI resolved the ~/.claude.json wipe; record the verification
-- 7 uncommitted path(s):
+### Verification done
 
-```
-M src/cli.ts
- M src/index.ts
- M src/instructions.ts
- M src/tools.ts
- M tasks/todo.md
-?? src/controls.ts
-?? src/steps.ts
-```
+- `npm run test:controls` (`scripts/controls-grant-test.mjs`, new): 39/39. Runs against a
+  throwaway `HOME`, so it never touches `~/.local/state/clickr/controls.json` — confirmed
+  that file still holds the lapsed 13:28 grant, unmodified.
+- Regression proved by measurement, not assertion: compiled `controls.ts` as it stands at
+  HEAD and ran the same sequence. Before: 6h grant → `refreshGrant()` → 30 min. After:
+  360 → 360. Scratch harness at
+  `<scratchpad>/prefix/{controls.ts,controls.js,run.mjs}` if it needs re-running.
+- One genuine parser bug found and fixed during the test run: "and then quit" matched
+  `an` + `d` and granted a day. Word-form amounts now require a whole word plus space.
+- `npx tsc` clean. Native helper NOT rebuilt — no Swift touched, and instructions are
+  served from TS (`src/index.ts` imports `INSTRUCTIONS`), not bundled into the binary.
+
+### In flight / not done
+
+- Nothing is committed, nothing published. `cpp` was not run and was not asked for.
+- `npx tsc` wrote `dist/` in place, but the clickr MCP server process currently attached to
+  this session was started before that and still has the old code loaded. The new behaviour
+  needs a Claude Code restart to take effect for the running session. The `clickr` CLI and
+  the `UserPromptSubmit` hook both spawn fresh and already use the new code.
+- `npm run build` (native + tsc + `chmod +x dist/hook.js`) has not been run end to end
+  this session; `dist/hook.js` is already executable from an earlier build.
+- Pre-existing, untouched: `npm test` has 1 known environmental failure ("unchanged region
+  is not re-sent as an image").
+
+### Open items deliberately deferred
+
+The operator said the older open points in `tasks/todo.md` can be covered later. The one
+still genuinely open there is item 7: display/resolution churn silently invalidating
+cached coordinates.
 
 <!-- /pai:checkpoint -->
 
 ---
 # Clickr — TODO
+
+## 2026-08-13 — grant window is now settable
+
+The control grant was a fixed 30-minute idle timer. It is now 30 minutes by default and
+overridable at handover time: `your controls for 6 hours`, `clickr controls you for 6
+hours`, or `minutes` on the `controls` tool. Capped at 24 hours.
+
+The window is stored on the grant rather than recomputed, because `refreshGrant()` runs
+after every actuating call — measured against a HEAD build, a 6-hour grant collapsed to
+30 minutes on the agent's first click. Verified: `npm run test:controls`, 39 cases,
+against a throwaway `HOME` so it never touches the real state file. Includes the
+false-positive cases that matter ("your controls, open tab 3" must not read as a window).
 
 ## Continue (state at 2026-08-01)
 

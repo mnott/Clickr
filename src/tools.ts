@@ -6,7 +6,14 @@ import {
   unionOfDisplays,
   type Rect,
 } from "./capture.js";
-import { grantToAgent, returnToUser } from "./controls.js";
+import {
+  DEFAULT_GRANT_MINUTES,
+  MAX_GRANT_MINUTES,
+  formatGrantMinutes,
+  grantToAgent,
+  normalizeGrantMinutes,
+  returnToUser,
+} from "./controls.js";
 import { getDisplays, getWindows, helper } from "./helper.js";
 
 type Content =
@@ -819,7 +826,13 @@ export const tools: Tool[] = [
     description:
       "Presses a named key, optionally with modifiers — Return, Tab, Escape, arrows, " +
       "function keys, or a single character key. Use this for shortcuts such as cmd+S, " +
-      "and for navigation that typing cannot express.",
+      "and for navigation that typing cannot express. " +
+      "KEYBOARD LAYOUT HAZARD: a single-character key posts a US keycode, not the character " +
+      "the operator's actual keyboard layout would type. On German QWERTZ the z and y keys " +
+      "are physically swapped from US QWERTY, so key:\"z\" produces what QWERTZ prints as " +
+      "\"y\" and vice versa — cmd+z (undo) can silently arrive as cmd+y (redo). This is not " +
+      "layout-aware and never will be; verify the actual effect (read_text, or the app's " +
+      "resulting state) rather than trusting that the requested key name was what landed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -936,7 +949,9 @@ export const tools: Tool[] = [
       "the actuating tools for yourself; that defeats the entire point of the gate. " +
       "This is a clarity mechanism, not a security boundary -- the operator can already run " +
       "`clickr controls you`/`clickr controls me` directly from a terminal, and any grant to " +
-      "the agent lapses on its own after a period of inactivity. Read-only tools (screenshot, " +
+      "the agent lapses on its own after a period of inactivity -- 30 minutes unless the " +
+      'operator named a longer window ("your controls for 6 hours"), which goes in `minutes`. ' +
+      "Read-only tools (screenshot, " +
       "find_elements, read_text, list_windows, ...) are never affected by this and always work.",
     inputSchema: {
       type: "object",
@@ -949,6 +964,15 @@ export const tools: Tool[] = [
             "controls\"). 'user' returns them to the operator (the operator said \"my " +
             "controls\").",
         },
+        minutes: {
+          ...num,
+          description:
+            "Only with holder:'agent'. How many minutes of INACTIVITY the grant survives " +
+            "before it lapses; every actuating call restarts that clock. Set it only when the " +
+            'operator named a window ("your controls for 6 hours" -> 360). Omit it otherwise ' +
+            `and the default of ${DEFAULT_GRANT_MINUTES} minutes applies. Clamped to at most ` +
+            `${MAX_GRANT_MINUTES} minutes.`,
+        },
         note: { ...str, description: "Optional short note recorded with the handover." },
       },
       required: ["holder"],
@@ -957,12 +981,16 @@ export const tools: Tool[] = [
       if (a.holder !== "agent" && a.holder !== "user") {
         throw new Error('holder must be "agent" or "user".');
       }
-      const state = a.holder === "agent" ? grantToAgent(a.note) : returnToUser(a.note);
+      const state =
+        a.holder === "agent" ? grantToAgent(a.note, a.minutes) : returnToUser(a.note);
       const lines = [
         `Controls: ${state.holder === "agent" ? "AGENT" : "OPERATOR"}`,
         `since: ${state.since}`,
       ];
       if (state.until) lines.push(`until: ${state.until}`);
+      if (state.holder === "agent") {
+        lines.push(`lapses after: ${formatGrantMinutes(normalizeGrantMinutes(state.minutes))} idle`);
+      }
       if (state.note) lines.push(`note: ${state.note}`);
       return text(lines.join("\n"));
     },

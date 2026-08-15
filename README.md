@@ -259,6 +259,56 @@ region returns a short text note instead of a duplicate image.
 | `activate_app` | Bring an app to the front, verified |
 | `set_window_bounds` | Move / resize / raise a specific window |
 | `get_clipboard` / `set_clipboard` | Read and write the clipboard |
+| `controls` | Record a control handover between operator and agent (see below) |
+
+## Control handover
+
+The actuating tools above (everything that clicks, types, drags, scrolls, or otherwise
+touches the real machine) only run once the operator has handed control to the agent —
+by saying **"your controls"** out loud, or by running `clickr controls you` in a
+terminal. Saying **"my controls"** (or `clickr controls me`) takes it back. Read-only
+tools — `screenshot`, `find_elements`, `read_text`, `list_windows`, and the rest —
+always work, regardless of who holds control.
+
+A grant lapses after 30 minutes of **inactivity** — every actuating call restarts that
+clock, so a session in continuous use never lapses, while one left idle does and needs a
+fresh handover. Hand over for longer by naming a window:
+
+```
+your controls for 6 hours
+your controls for 90 minutes
+```
+
+The same phrasing works on the command line (`clickr controls you for 6 hours`, or
+just `clickr controls you 6h`). The window is stored with the grant, so it survives
+every refresh rather than collapsing back to the default on the agent's first click. It
+is capped at 24 hours — the gate is an idle timer, not a permanent unlock.
+
+**This is a clarity mechanism, not a security boundary**, and it is worth being
+explicit about that rather than leaving it implied:
+
+- **With `clickr install`'s `UserPromptSubmit` hook installed** (the default —
+  `clickr install` registers it in `~/.claude.json`), the operator's spoken phrase is
+  **authoritative**. The hook watches every prompt the operator submits, and the moment
+  it sees "your controls" or "my controls" it updates the control state directly —
+  before the agent even sees the message. Nothing the agent does or fails to do can get
+  this wrong.
+- **Without that hook installed**, nothing observes the conversation at all. The agent
+  is trusted to notice the phrase and call the `controls` tool itself, in direct
+  response to hearing it — which means an agent that chose to call `controls` on its
+  own initiative, without a real handover, would not be stopped. Anyone with shell
+  access can also just run `clickr controls you` directly, hook or not.
+
+Treat the gate as a guardrail for normal, cooperative use — it stops an agent from
+touching your mouse and keyboard by accident or overreach — not as a defense against an
+adversarial agent or a local attacker.
+
+```bash
+clickr controls you             # hand control to the agent (30 min idle window)
+clickr controls you for 6 hours # ... with a longer idle window (max 24h)
+clickr controls me              # take it back
+clickr controls status          # show who currently holds it
+```
 
 ## Typical loop
 

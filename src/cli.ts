@@ -12,13 +12,21 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { grantToAgent, readControls, returnToUser } from "./controls.js";
+import {
+  formatGrantMinutes,
+  grantToAgent,
+  normalizeGrantMinutes,
+  parseGrantDuration,
+  readControls,
+  returnToUser,
+} from "./controls.js";
 import { readLastSteps } from "./steps.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const claudeJsonPath = join(homedir(), ".claude.json");
 const skillDir = join(homedir(), ".claude", "skills", "Clickr");
 const serverKey = "clickr";
+const hookPath = join(packageRoot, "dist", "hook.js");
 
 const c = {
   ok: (s: string) => `\x1b[32m✓\x1b[0m ${s}`,
@@ -46,6 +54,54 @@ function writeConfig(config: Record<string, any>) {
     copyFileSync(claudeJsonPath, claudeJsonPath + ".bak-clickr");
   }
   writeFileSync(claudeJsonPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+}
+
+/**
+ * Registers dist/hook.js as a UserPromptSubmit hook so the operator's spoken "your
+ * controls" / "my controls" is authoritative without the agent having to relay it.
+ * Idempotent: re-running install must not add a second copy, and any hooks already
+ * registered by other tools (for other events, or other UserPromptSubmit commands)
+ * must survive untouched. Mutates `config` in place; returns whether it changed anything.
+ */
+function installHook(config: Record<string, any>): boolean {
+  if (typeof config.hooks !== "object" || config.hooks === null) config.hooks = {};
+  if (!Array.isArray(config.hooks.UserPromptSubmit)) config.hooks.UserPromptSubmit = [];
+  const groups: any[] = config.hooks.UserPromptSubmit;
+
+  const alreadyRegistered = groups.some(
+    (g) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => h?.command === hookPath)
+  );
+  if (alreadyRegistered) return false;
+
+  groups.push({ matcher: "", hooks: [{ type: "command", command: hookPath }] });
+  return true;
+}
+
+/**
+ * Removes only clickr's UserPromptSubmit hook entry, leaving every other hook -- for
+ * this or any other event -- exactly as it was. Mutates `config` in place; returns
+ * whether it changed anything.
+ */
+function uninstallHook(config: Record<string, any>): boolean {
+  const groups = config.hooks?.UserPromptSubmit;
+  if (!Array.isArray(groups)) return false;
+
+  let removed = false;
+  const kept = groups
+    .map((g) => {
+      if (!Array.isArray(g?.hooks)) return g;
+      const filteredHooks = g.hooks.filter((h: any) => h?.command !== hookPath);
+      if (filteredHooks.length !== g.hooks.length) removed = true;
+      return { ...g, hooks: filteredHooks };
+    })
+    .filter((g) => !Array.isArray(g?.hooks) || g.hooks.length > 0);
+
+  if (!removed) return false;
+
+  config.hooks.UserPromptSubmit = kept;
+  if (config.hooks.UserPromptSubmit.length === 0) delete config.hooks.UserPromptSubmit;
+  if (Object.keys(config.hooks).length === 0) delete config.hooks;
+  return true;
 }
 
 function helperBuilt(): boolean {
@@ -177,6 +233,7 @@ function install() {
   };
   const existed = !!config.mcpServers[serverKey];
   config.mcpServers[serverKey] = entry;
+  const hookChanged = installHook(config);
   writeConfig(config);
   console.log(
     c.ok(`${existed ? "updated" : "registered"} "${serverKey}" in ~/.claude.json`)
@@ -184,6 +241,11 @@ function install() {
   if (existsSync(claudeJsonPath + ".bak-clickr")) {
     console.log(c.dim(`  backup: ${claudeJsonPath}.bak-clickr`));
   }
+  console.log(
+    hookChanged
+      ? c.ok('registered the UserPromptSubmit hook -- "your controls" / "my controls" now work out loud')
+      : c.dim("UserPromptSubmit hook already registered")
+  );
 
   console.log(
     installSkill()
@@ -200,13 +262,26 @@ function install() {
 function uninstall() {
   const config = readConfig();
   const servers = (config.mcpServers ?? {}) as Record<string, unknown>;
-  if (!servers[serverKey]) {
+  const serverRegistered = !!servers[serverKey];
+  if (serverRegistered) delete servers[serverKey];
+  const hookRemoved = uninstallHook(config);
+
+  if (!serverRegistered && !hookRemoved) {
     console.log(c.warn(`"${serverKey}" was not registered in ~/.claude.json`));
     return;
   }
-  delete servers[serverKey];
+
   writeConfig(config);
-  console.log(c.ok(`removed "${serverKey}" from ~/.claude.json`));
+  console.log(
+    serverRegistered
+      ? c.ok(`removed "${serverKey}" from ~/.claude.json`)
+      : c.dim(`"${serverKey}" mcp server was not registered`)
+  );
+  console.log(
+    hookRemoved
+      ? c.ok("removed the UserPromptSubmit hook")
+      : c.dim("UserPromptSubmit hook was not registered")
+  );
   console.log(c.dim(`  The skill at ${skillDir} was left in place; delete it manually if unwanted.`));
   console.log(c.bold("Restart Claude Code to drop the tools."));
 }
@@ -271,15 +346,30 @@ function doctor() {
   }
 }
 
-function controls(sub: string | undefined, note: string | undefined) {
+/**
+ * `rest` is everything after the subcommand, still as separate argv words. It may open
+ * with a grant window ("for 6 hours", "6h") and continue with a free-text note, so the
+ * words are rejoined and handed to the same parser the spoken form uses -- one syntax,
+ * whether the operator says it to the agent or types it in a terminal.
+ */
+function controls(sub: string | undefined, rest: string[]) {
+  const trailing = rest.join(" ").trim();
   switch (sub) {
     case "you": {
-      const state = grantToAgent(note);
-      console.log(c.ok(`controls handed to the agent — expires ${state.until}`));
+      const requested = parseGrantDuration(trailing);
+      const note = (requested ? requested.rest : trailing) || undefined;
+      const state = grantToAgent(note, requested?.minutes);
+      console.log(
+        c.ok(
+          `controls handed to the agent — lapses after ` +
+            `${formatGrantMinutes(normalizeGrantMinutes(state.minutes))} idle (${state.until})`
+        )
+      );
       if (note) console.log(c.dim(`  note: ${note}`));
       break;
     }
     case "me": {
+      const note = trailing || undefined;
       const state = returnToUser(note);
       console.log(c.ok(`controls returned to the operator (${state.since})`));
       if (note) console.log(c.dim(`  note: ${note}`));
@@ -293,15 +383,18 @@ function controls(sub: string | undefined, note: string | undefined) {
       console.log(`holder: ${state.holder === "agent" ? c.warn("agent") : c.ok("operator")}`);
       console.log(c.dim(`since:  ${state.since}`));
       if (state.until) console.log(c.dim(`until:  ${state.until}`));
+      if (state.holder === "agent") {
+        console.log(c.dim(`window: ${formatGrantMinutes(normalizeGrantMinutes(state.minutes))} idle`));
+      }
       if (state.note) console.log(c.dim(`note:   ${state.note}`));
       break;
     }
     default:
       console.log(c.bad(`unknown "clickr controls ${sub}"`));
       console.log();
-      console.log("  clickr controls you [note]      hand the controls to the agent");
-      console.log("  clickr controls me [note]       return the controls to the operator");
-      console.log("  clickr controls [status]        show who currently holds the controls");
+      console.log("  clickr controls you [for <n>] [note]  hand the controls to the agent");
+      console.log("  clickr controls me [note]             return the controls to the operator");
+      console.log("  clickr controls [status]              show who currently holds the controls");
       process.exit(1);
   }
 }
@@ -314,7 +407,28 @@ function steps(nArg: string | undefined) {
     console.log(c.dim("no steps logged yet"));
     return;
   }
-  for (const line of lines) console.log(line);
+  /**
+   * Rendered in the operator's own convention, and tolerant of both log shapes.
+   *
+   * An `outcome` column was added so a step that was begun and never finished
+   * is distinguishable from one that completed — the case that used to leave no
+   * trace at all. Lines written before that change have one field fewer, and
+   * they are still worth reading, so the shape is detected per line rather than
+   * assumed. A viewer that only understands today's format silently drops the
+   * history it was built to show.
+   */
+  for (const line of lines) {
+    const f = line.split("\t");
+    const hasOutcome = f.length >= 5;
+    const [iso, outcome, tool, step] = hasOutcome ? f : [f[0], "", f[1], f[2]];
+    const d = new Date(iso);
+    const p = (n: number) => String(n).padStart(2, "0");
+    const stamp = Number.isNaN(d.getTime())
+      ? iso
+      : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    const mark = outcome === "failed" ? c.dim("✗") : outcome === "start" ? c.dim("▸") : outcome === "ok" ? "✓" : " ";
+    console.log(`[${stamp}] ${mark} ${c.dim(tool ?? "")}  ${step ?? ""}`);
+  }
 }
 
 const command = process.argv[2];
@@ -325,7 +439,7 @@ try {
     case "remove": uninstall(); break;
     case "status": status(); break;
     case "doctor": doctor(); break;
-    case "controls": controls(process.argv[3], process.argv[4]); break;
+    case "controls": controls(process.argv[3], process.argv.slice(4)); break;
     case "steps": steps(process.argv[3]); break;
     default:
       console.log("clickr — macOS screen measurement and input control for Claude Code");
@@ -334,8 +448,8 @@ try {
       console.log("  clickr uninstall                remove the registration");
       console.log("  clickr status                   show registration and permission status");
       console.log("  clickr doctor                   diagnose a broken install");
-      console.log("  clickr controls you [note]      hand the controls to the agent");
-      console.log("  clickr controls me [note]       return the controls to the operator");
+      console.log("  clickr controls you [for <n>]   hand the controls to the agent (default 30 min idle)");
+      console.log("  clickr controls me              return the controls to the operator");
       console.log("  clickr controls [status]        show who currently holds the controls");
       console.log("  clickr steps [n]                print the last n logged agent steps (default 20)");
       console.log();

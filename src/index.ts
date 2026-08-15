@@ -8,7 +8,7 @@ import {
 import { ACTUATING_TOOLS, handoverMessage, readControls, refreshGrant } from "./controls.js";
 import { helper } from "./helper.js";
 import { INSTRUCTIONS } from "./instructions.js";
-import { logStep } from "./steps.js";
+import { announcement, logStep } from "./steps.js";
 import { tools } from "./tools.js";
 
 import { createRequire } from "node:module";
@@ -93,20 +93,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // Strip `step` before it reaches the native helper, which knows nothing about it.
   const { step, ...args } = rawArgs;
 
+  /**
+   * SAY IT BEFORE DOING IT.
+   *
+   * The announcement used to be produced only after the handler returned, which
+   * made it a report rather than a warning: a call that hung, froze the screen
+   * or never came back left no trace of what it had been about to do — the one
+   * situation where the operator most needs to know. It is now written to the
+   * step log and to stderr before the pointer moves.
+   *
+   * It is also formatted in the operator's own convention rather than a private
+   * one. That convention used to be a standing instruction the model was asked
+   * to type by hand every time, and a rule that depends on remembering is a rule
+   * that decays — it went missing repeatedly. Emitting it here makes it
+   * structural: there is no way to actuate without it, because `step` is already
+   * required and this is what happens to it.
+   */
+  const note = actuating ? announcement(String(step)) : null;
+  if (note) {
+    logStep(tool.name, String(step), args, "start");
+    // stderr, not stdout: stdout is the MCP transport and anything written
+    // there corrupts the protocol. stderr reaches the operator's server log.
+    try { process.stderr.write(`${note}\n`); } catch { /* never block a call */ }
+  }
+
   try {
     const content = await tool.handler(args);
     if (actuating) {
-      // Only a successful actuating call keeps the grant alive and gets logged --
-      // a refused or failed call should not extend control it didn't get to use.
+      // Only a successful actuating call keeps the grant alive -- a refused or
+      // failed call should not extend control it didn't get to use.
       refreshGrant();
-      logStep(tool.name, String(step), args);
-      return { content: [{ type: "text", text: `▸ ${step}` }, ...content] };
+      logStep(tool.name, String(step), args, "ok");
+      return { content: [{ type: "text", text: note! }, ...content] };
     }
     return { content };
   } catch (e: any) {
+    // A failed actuation is exactly what the pre-log exists for: the intent is
+    // already on record, and this closes it rather than leaving it dangling.
+    if (actuating) logStep(tool.name, String(step), args, "failed");
     return {
       isError: true,
-      content: [{ type: "text", text: e?.message ?? String(e) }],
+      content: [
+        ...(note ? [{ type: "text" as const, text: note }] : []),
+        { type: "text" as const, text: e?.message ?? String(e) },
+      ],
     };
   }
 });

@@ -54,13 +54,45 @@ function truncateIfLarge(file: string): void {
   }
 }
 
-/** Appends one line for a successful actuating tool call. Never throws. */
-export function logStep(toolName: string, step: string, args: Record<string, unknown>): void {
+/**
+ * The announcement, in the operator's own convention.
+ *
+ * `[YYYY-MM-DD HH:MM] Next clickr step: …` is the exact form the operator asks
+ * for by hand, so producing it here rather than relying on the model to type it
+ * makes the two indistinguishable — and makes it greppable across the log, the
+ * transcript and the terminal at once. Local time, because it is read by a
+ * person sitting at the machine, not correlated with a server somewhere.
+ */
+export function announcement(step: string): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `[${stamp}] Next clickr step: ${step}`;
+}
+
+/**
+ * Appends one line for an actuating tool call. Never throws.
+ *
+ * CALLED BEFORE THE ACTION, NOT AFTER. It used to be written only once the call
+ * had returned successfully, which meant the single case where the record
+ * matters most — a click that hung, froze the machine or never came back — was
+ * the one case that left nothing behind. An intent recorded after the fact is
+ * not a record of intent, it is a record of outcome.
+ *
+ * `outcome` is filled in by a second call once the result is known, so the log
+ * distinguishes "about to" from "did" without losing either.
+ */
+export function logStep(
+  toolName: string,
+  step: string,
+  args: Record<string, unknown>,
+  outcome: "start" | "ok" | "failed" = "start",
+): void {
   try {
     const dir = stateDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     const file = stepsLogPath();
-    const line = `${new Date().toISOString()}\t${toolName}\t${step}\t${summarizeArgs(args)}\n`;
+    const line = `${new Date().toISOString()}\t${outcome}\t${toolName}\t${step}\t${summarizeArgs(args)}\n`;
     appendFileSync(file, line, "utf8");
     truncateIfLarge(file);
   } catch {
