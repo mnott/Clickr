@@ -71,6 +71,46 @@ func flags(from list: Any?) -> CGEventFlags {
     return f
 }
 
+/// The modifier keys, pressed before an event and let go after it, the way a
+/// hand does.
+///
+/// Setting the modifier bits on a key or mouse event is not the same as
+/// holding the key. The HID event source takes the bits as the keyboard's
+/// state, and with nothing ever posting the modifier's own key-up, ⌘ stayed
+/// held for the rest of the session after one cmd+Z: every later click a
+/// ⌘-click, every typed letter a shortcut. Measured with
+/// `CGEventSourceFlagsState`: cmd held after one press, none after this.
+///
+/// The ups go out even when the body throws, so a refused event cannot leave
+/// a key down either.
+func holdingModifiers(_ mods: CGEventFlags, _ body: () throws -> Void) rethrows {
+    let keys: [(CGEventFlags, CGKeyCode)] = [
+        (.maskCommand, 0x37), (.maskShift, 0x38), (.maskAlternate, 0x3A),
+        (.maskControl, 0x3B), (.maskSecondaryFn, 0x3F),
+    ]
+    let held = keys.filter { mods.contains($0.0) }
+    var down: CGEventFlags = []
+    for (flag, code) in held {
+        down.insert(flag)
+        if let e = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: true) {
+            e.flags = down
+            e.post(tap: .cghidEventTap)
+            usleep(5_000)
+        }
+    }
+    defer {
+        for (flag, code) in held.reversed() {
+            down.remove(flag)
+            if let e = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: false) {
+                e.flags = down
+                e.post(tap: .cghidEventTap)
+                usleep(5_000)
+            }
+        }
+    }
+    try body()
+}
+
 let keyCodes: [String: CGKeyCode] = [
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9,
     "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17,
@@ -433,11 +473,13 @@ func doClick(_ obj: [String: Any]) throws -> [String: Any] {
     postMouse(.mouseMoved, point, .left, [])
     usleep(30_000)
 
-    for i in 1...count {
-        postMouse(down, point, button, mods, clickState: Int64(i))
-        usleep(20_000)
-        postMouse(up, point, button, mods, clickState: Int64(i))
-        if i < count { usleep(60_000) }
+    holdingModifiers(mods) {
+        for i in 1...count {
+            postMouse(down, point, button, mods, clickState: Int64(i))
+            usleep(20_000)
+            postMouse(up, point, button, mods, clickState: Int64(i))
+            if i < count { usleep(60_000) }
+        }
     }
 
     if restore {
@@ -492,17 +534,19 @@ func doDrag(_ obj: [String: Any]) throws -> [String: Any] {
 
     postMouse(.mouseMoved, from, .left, [])
     usleep(40_000)
-    postMouse(down, from, button, mods)
-    usleep(60_000)
-    // Interpolate: apps that implement drag tracking ignore a single jump.
-    for i in 1...steps {
-        let t = Double(i) / Double(steps)
-        let p = CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
-        postMouse(dragged, p, button, mods)
-        usleep(8_000)
+    holdingModifiers(mods) {
+        postMouse(down, from, button, mods)
+        usleep(60_000)
+        // Interpolate: apps that implement drag tracking ignore a single jump.
+        for i in 1...steps {
+            let t = Double(i) / Double(steps)
+            let p = CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
+            postMouse(dragged, p, button, mods)
+            usleep(8_000)
+        }
+        usleep(60_000)
+        postMouse(up, to, button, mods)
     }
-    usleep(60_000)
-    postMouse(up, to, button, mods)
     return ["fromX": from.x, "fromY": from.y, "toX": to.x, "toY": to.y, "steps": steps]
 }
 
@@ -521,7 +565,7 @@ func doScroll(_ obj: [String: Any]) throws -> [String: Any] {
                           wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)
     else { throw HelperError("could not create scroll event") }
     if !mods.isEmpty { e.flags = mods }
-    e.post(tap: .cghidEventTap)
+    holdingModifiers(mods) { e.post(tap: .cghidEventTap) }
     return ["dx": Int(dx), "dy": Int(dy), "units": unit == .pixel ? "pixel" : "line"]
 }
 
@@ -592,16 +636,18 @@ func doKey(_ obj: [String: Any]) throws -> [String: Any] {
     let destination = try verifyDestination(obj)
     let mods = flags(from: obj["modifiers"])
     let count = max(1, min(100, Int(num(obj["count"]) ?? 1)))
-    for _ in 1...count {
-        guard let down = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: true),
-            let up = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: false)
-        else { throw HelperError("could not create key event") }
-        down.flags = mods
-        up.flags = mods
-        down.post(tap: .cghidEventTap)
-        usleep(15_000)
-        up.post(tap: .cghidEventTap)
-        usleep(15_000)
+    try holdingModifiers(mods) {
+        for _ in 1...count {
+            guard let down = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: true),
+                let up = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: false)
+            else { throw HelperError("could not create key event") }
+            down.flags = mods
+            up.flags = mods
+            down.post(tap: .cghidEventTap)
+            usleep(15_000)
+            up.post(tap: .cghidEventTap)
+            usleep(15_000)
+        }
     }
     return ["key": name, "count": count, "frontmostApp": destination]
 }
