@@ -1,68 +1,62 @@
 ## Continue
 
-<!-- pai:checkpoint authored="model" session="0015 - 2026-08-13 - Token Grant Duration Refresh Bug, Build Setup" session-id="d0302abc-92eb-4cc4-8dc3-519fc005f39e" ts="2026-08-13T17:05:49.163Z" -->
+<!-- pai:checkpoint authored="model" session="0001 - 2026-09-03 - Clickr V0.7.1 Build And Release" session-id="d0302abc-92eb-4cc4-8dc3-519fc005f39e" ts="2026-09-03T07:02:29.823Z" -->
 
-> **Last session:** 0015 - 2026-08-13 - Token Grant Duration Refresh Bug, Build Setup
-> **Paused at:** 2026-08-13T17:05:49.163Z
+> **Last session:** 0001 - 2026-09-03 - Clickr V0.7.1 Build And Release
+> **Paused at:** 2026-09-03T07:02:29.823Z
 >
 > Working directory: /Users/i052341/Daten/Cloud/Development/ai/clickr
 >
 > Resume with: `claude --resume d0302abc-92eb-4cc4-8dc3-519fc005f39e`
 
-**Session focus:** made clickr's control-grant lapse window settable at handover time.
-Everything below is uncommitted on `main`, on top of `a6d45d3`.
+**Session focus (2026-09-03):** merged the stuck-modifier fix into `main` and released
+`@tekmidian/clickr@0.7.1`. Working tree clean, everything pushed.
 
-### Landed in the working tree (nothing committed, nothing published)
+### Shipped
 
-Grant window is now 30 minutes of idle by default and overridable per handover, capped at
-24 hours:
+- `main` fast-forwarded `3ce5ad7..95194d2` — no merge commit was needed, the fix branch
+  was exactly one commit ahead.
+- `95194d2` — `native/clickr-helper.swift`: new `holdingModifiers(_:_:)` presses each
+  modifier's own key down before an event and lets it up after, instead of only setting
+  the modifier bits on the event. Setting the bits alone left ⌘ held for the rest of the
+  session after one cmd+Z, turning every later click into a ⌘-click. Wrapped around
+  `doClick`, `doDrag`, `doScroll` and `doKey`. The releases run from a `defer`, so a
+  refused event cannot leave a key down. No-op when no modifiers are set.
+- `1d49470 chore: release 0.7.1` — version bump plus lockfile, single commit, pushed.
+- Published `@tekmidian/clickr@0.7.1` to npm (0.7.0 was the previous published version;
+  local and registry were in sync before the bump).
+- `npm run build` ran clean: native Swift helper rebuilt into `bin/clickr-helper`, then
+  `tsc`, then `chmod +x dist/hook.js`.
 
-- `src/controls.ts` — `ControlsState.minutes` persists the window on the grant;
-  `normalizeGrantMinutes()` (clamp 1..1440), `formatGrantMinutes()`, `parseGrantDuration()`
-  (anchored parse of "for 6 hours" / "6h" / "90m" / "an hour" / "für 6 Stunden", returning
-  the remainder as the note). `refreshGrant()` no longer takes a `minutes` argument — it
-  reads the window off the grant. `handoverMessage()` reports the real window, not a
-  hardcoded 30.
-- `src/hook.ts` — `lastHandover()` now returns the text after the phrase so the hook can
-  parse an attached window; confirmation line names it.
-- `src/cli.ts` — `clickr controls you for 6 hours` / `clickr controls you 6h <note>`;
-  argv after the subcommand is rejoined and fed to the same parser as the spoken form.
-  `controls status` prints the window. Usage text updated.
-- `src/tools.ts` — `controls` tool gained a `minutes` parameter (+ description).
-- `src/instructions.ts`, `README.md` — documented.
-- `package.json` — new `test:controls` script.
+### Not verified live, and why
 
-### Verification done
+The fix was NOT re-measured this session. Posting a real cmd+key event requires the
+control handover, which was never given, and any such test fires into whatever app is
+frontmost. The commit itself documents the measurement it was built from
+(`CGEventSourceFlagsState`: cmd held after one press before the fix, none after). If a
+live check is ever wanted, it needs `clickr controls you` first and a scratch app in
+front — never the operator's real work.
 
-- `npm run test:controls` (`scripts/controls-grant-test.mjs`, new): 39/39. Runs against a
-  throwaway `HOME`, so it never touches `~/.local/state/clickr/controls.json` — confirmed
-  that file still holds the lapsed 13:28 grant, unmodified.
-- Regression proved by measurement, not assertion: compiled `controls.ts` as it stands at
-  HEAD and ran the same sequence. Before: 6h grant → `refreshGrant()` → 30 min. After:
-  360 → 360. Scratch harness at
-  `<scratchpad>/prefix/{controls.ts,controls.js,run.mjs}` if it needs re-running.
-- One genuine parser bug found and fixed during the test run: "and then quit" matched
-  `an` + `d` and granted a day. Word-form amounts now require a whole word plus space.
-- `npx tsc` clean. Native helper NOT rebuilt — no Swift touched, and instructions are
-  served from TS (`src/index.ts` imports `INSTRUCTIONS`), not bundled into the binary.
+### Open
 
-### In flight / not done
+- The clickr MCP server process attached to this session was started before the rebuild
+  and still holds the old `bin/clickr-helper`, so ⌘ can still stick in THIS session. A
+  Claude Code restart picks up 0.7.1.
+- Local branch `fix/a-modifier-is-let-go-after-the-event` still exists, fully merged into
+  `main`. Offered to delete it; no answer given, so it was left alone.
+- Carried over, untouched this session: `npm test` has one known environmental failure
+  ("unchanged region is not re-sent as an image") — it captures a live terminal that
+  repaints between the two captures. Not worth chasing without a stable capture target.
+- Carried over from `tasks/todo.md` item 7, still genuinely open: display/resolution
+  churn silently invalidates cached coordinates. A `geometry_token` / generation counter
+  that `click` can be checked against would make a stale coordinate fail loudly instead
+  of clicking the wrong thing.
 
-- Nothing is committed, nothing published. `cpp` was not run and was not asked for.
-- `npx tsc` wrote `dist/` in place, but the clickr MCP server process currently attached to
-  this session was started before that and still has the old code loaded. The new behaviour
-  needs a Claude Code restart to take effect for the running session. The `clickr` CLI and
-  the `UserPromptSubmit` hook both spawn fresh and already use the new code.
-- `npm run build` (native + tsc + `chmod +x dist/hook.js`) has not been run end to end
-  this session; `dist/hook.js` is already executable from an earlier build.
-- Pre-existing, untouched: `npm test` has 1 known environmental failure ("unchanged region
-  is not re-sent as an image").
+### Note for whoever reads `tasks/todo.md` next
 
-### Open items deliberately deferred
-
-The operator said the older open points in `tasks/todo.md` can be covered later. The one
-still genuinely open there is item 7: display/resolution churn silently invalidating
-cached coordinates.
+Its `## Continue` block was three weeks stale at the start of this session — it claimed
+the grant-window work was uncommitted when it had already landed in `3ce5ad7`. Trust
+`git log` over that block.
 
 <!-- /pai:checkpoint -->
 
