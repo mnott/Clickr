@@ -5,7 +5,14 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { ACTUATING_TOOLS, handoverMessage, readControls, refreshGrant } from "./controls.js";
+import {
+  ACTUATING_TOOLS,
+  checkAgentIdentity,
+  handoverMessage,
+  reapDeadHolder,
+  readControls,
+  refreshGrant,
+} from "./controls.js";
 import { helper } from "./helper.js";
 import { INSTRUCTIONS } from "./instructions.js";
 import { announcement, logStep } from "./steps.js";
@@ -71,9 +78,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (actuating) {
     // Fresh read on every call, deliberately uncached -- see controls.ts. This is what
     // lets `clickr controls me` in another terminal take effect at the very next call,
-    // mid-sequence.
-    if (readControls().holder !== "agent") {
+    // mid-sequence. Reaped before deciding, so a worker that crashed while holding a
+    // delegated grant can never leave its delegator permanently locked out.
+    const state = reapDeadHolder(readControls());
+    if (state.holder !== "agent") {
       return { isError: true, content: [{ type: "text", text: handoverMessage() }] };
+    }
+    const identityError = checkAgentIdentity(state, process.env.PAI_WORKER_ID);
+    if (identityError) {
+      return { isError: true, content: [{ type: "text", text: identityError }] };
     }
     if (typeof rawArgs.step !== "string" || rawArgs.step.trim() === "") {
       return {

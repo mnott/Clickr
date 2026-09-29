@@ -284,6 +284,36 @@ just `clickr controls you 6h`). The window is stored with the grant, so it survi
 every refresh rather than collapsing back to the default on the agent's first click. It
 is capped at 24 hours — the gate is an idle timer, not a permanent unlock.
 
+### One holder, by identity
+
+A grant has exactly one holder at a time. Several agents can share this machine — more
+than one interactive session, several PAI workers, each running its own clickr MCP
+server — so a plain "your controls" only unlocks the actuating tools for the
+**interactive session** the operator said it to; a worker (any process with
+`PAI_WORKER_ID` set) is refused even while that grant is active.
+
+To let one specific worker act, name it: `clickr controls you --agent <id>` (add
+`--pid <n>` so a crash can be detected). Only the worker whose `PAI_WORKER_ID` matches
+`<id>` may then actuate; every other worker, and the session itself, is refused.
+
+A session that already holds an agent grant can **delegate** it to a worker the same
+way — `clickr controls you --agent <id>` while holder is already `agent` pushes the
+current holder onto a return stack instead of starting a fresh grant, so the window and
+expiry of an overnight grant are left untouched. The worker hands it back with
+`clickr controls return --agent <id>`, restoring whoever it was delegated from. If a
+worker holding a delegated grant crashes, the next actuating call detects its pid is
+gone and restores the previous holder automatically — a delegation can never leave the
+session locked out.
+
+```bash
+clickr controls you --agent w1 --pid 4821   # delegate to worker w1
+clickr controls return --agent w1           # w1 hands it back
+clickr controls status                      # shows the chain, e.g. "w2 <- w1 <- session"
+```
+
+This is still the same clarity mechanism, not a security boundary: anyone with shell
+access can already run `clickr controls you --agent <anything>` directly.
+
 **This is a clarity mechanism, not a security boundary**, and it is worth being
 explicit about that rather than leaving it implied:
 
@@ -306,8 +336,10 @@ adversarial agent or a local attacker.
 ```bash
 clickr controls you             # hand control to the agent (30 min idle window)
 clickr controls you for 6 hours # ... with a longer idle window (max 24h)
+clickr controls you --agent w1 --pid 4821  # target/delegate to worker w1
+clickr controls return --agent w1          # w1 hands its delegation back
 clickr controls me              # take it back
-clickr controls status          # show who currently holds it
+clickr controls status          # show who currently holds it (and the chain)
 ```
 
 ## Typical loop

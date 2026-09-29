@@ -34,3 +34,4 @@ memory/
 tasks/
 _index.md
 clickr.md
+native/.build/

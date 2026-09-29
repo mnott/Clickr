@@ -23,10 +23,15 @@ process.env.HOME = sandboxHome;
 const {
   DEFAULT_GRANT_MINUTES,
   MAX_GRANT_MINUTES,
+  checkAgentIdentity,
+  delegateControl,
   grantToAgent,
   parseGrantDuration,
+  reapDeadHolder,
   readControls,
   refreshGrant,
+  returnControl,
+  returnToUser,
   stateFilePath,
 } = await import(join(repoRoot, "dist", "controls.js"));
 
@@ -149,6 +154,115 @@ check("status shows the window", /window:\s*6 hours/.test(statusOut), statusOut)
 runCli("you");
 check("bare `controls you` uses the default", readControls().minutes === DEFAULT_GRANT_MINUTES);
 
+console.log("\nCLI parses --agent alongside a window and note");
+runCli("me");
+const agentCliOut = runCli("you", "--agent", "w1", "for", "2h", "note");
+const afterAgentCli = readControls();
+check("agentId parsed from --agent", afterAgentCli.agentId === "w1", afterAgentCli.agentId);
+check("window still parsed after --agent", afterAgentCli.minutes === 120, afterAgentCli.minutes);
+check("note still kept after --agent and window", afterAgentCli.note === "note", afterAgentCli.note);
+check("status shows the agent id", /agent:\s*w1/.test(runCli("status")));
+
+console.log("\n`me` clears the agent identity");
+runCli("me");
+check("agentId cleared", readControls().agentId === null);
+check("agentPid cleared", readControls().agentPid === null);
+check("returnTo cleared", readControls().returnTo.length === 0);
+
+console.log("\nan old state file written before agentId existed loads as null");
+grantToAgent(undefined, 60);
+const legacyNoAgent = readControls();
+delete legacyNoAgent.agentId;
+delete legacyNoAgent.agentPid;
+delete legacyNoAgent.returnTo;
+execFileSync(process.execPath, [
+  "-e",
+  `require("fs").writeFileSync(${JSON.stringify(stateFilePath())}, ${JSON.stringify(JSON.stringify(legacyNoAgent))})`,
+]);
+const loadedLegacy = readControls();
+check("agentId defaults to null", loadedLegacy.agentId === null, loadedLegacy.agentId);
+check("agentPid defaults to null", loadedLegacy.agentPid === null, loadedLegacy.agentPid);
+check("returnTo defaults to []", Array.isArray(loadedLegacy.returnTo) && loadedLegacy.returnTo.length === 0);
+
+console.log("\nthe identity gate (checkAgentIdentity)");
+check("agentId w1 + env w1 -> allowed", checkAgentIdentity({ agentId: "w1" }, "w1") === null);
+check(
+  "agentId w1 + env w2 -> refused, names the holder",
+  /worker w1/.test(checkAgentIdentity({ agentId: "w1" }, "w2") ?? "")
+);
+check(
+  "agentId w1 + no env -> refused",
+  typeof checkAgentIdentity({ agentId: "w1" }, undefined) === "string"
+);
+check("agentId null + no env -> allowed (interactive session)", checkAgentIdentity({ agentId: null }, undefined) === null);
+check(
+  "agentId null + env w1 -> refused, tells the worker to ask for delegation",
+  /session, not to this worker/.test(checkAgentIdentity({ agentId: null }, "w1") ?? "")
+);
+
+console.log("\ndelegating a session's grant to one worker, and back");
+returnToUser();
+grantToAgent(undefined, 360); // the operator's "your controls for 6 hours" to the session
+const sessionGrant = readControls();
+check("session grant starts untargeted", sessionGrant.agentId === null);
+
+delegateControl("w1", 111);
+const delegatedToW1 = readControls();
+check("delegated agentId is the worker", delegatedToW1.agentId === "w1");
+check("delegated agentPid is recorded", delegatedToW1.agentPid === 111);
+check(
+  "return stack holds the session (null)",
+  delegatedToW1.returnTo.length === 1 && delegatedToW1.returnTo[0].agentId === null
+);
+check(
+  "delegation does not shorten or reset the overnight grant",
+  delegatedToW1.until === sessionGrant.until && delegatedToW1.minutes === sessionGrant.minutes
+);
+
+delegateControl("w2", 222);
+const nested = readControls();
+check("nested delegation targets w2", nested.agentId === "w2");
+check(
+  "return stack is [session, w1], most recent last",
+  nested.returnTo.length === 2 && nested.returnTo[0].agentId === null && nested.returnTo[1].agentId === "w1"
+);
+check("nested delegation still keeps the original expiry", nested.until === sessionGrant.until);
+
+const returnedFromW2 = returnControl("w2");
+check("w2 returning pops back to w1", returnedFromW2.popped && returnedFromW2.state.agentId === "w1");
+check("return stack shrinks by one", readControls().returnTo.length === 1);
+
+const wrongReturn = returnControl("w2");
+check("a worker that no longer holds it can't return -- no-op", wrongReturn.popped === false);
+check("state is unchanged by the no-op return", readControls().agentId === "w1");
+
+const returnedFromW1 = returnControl("w1");
+check("w1 returning pops back to the session", returnedFromW1.popped && returnedFromW1.state.agentId === null);
+check("return stack is empty again", readControls().returnTo.length === 0);
+
+console.log("\ncrash recovery: a dead worker's delegated grant is reaped, repeatedly if needed");
+returnToUser();
+grantToAgent(undefined, 360);
+delegateControl("w1", 999998); // pid far outside any real process range -- reliably dead
+delegateControl("w2", 999999); // also dead, so the reap must skip past w1 too
+const beforeReap = readControls();
+check("both delegated pids are dead before reaping", beforeReap.agentId === "w2");
+
+const reaped = reapDeadHolder(beforeReap);
+check("holder stays agent", reaped.holder === "agent");
+check("reap skips past the also-dead w1 straight to the session", reaped.agentId === null, reaped.agentId);
+check("return stack is drained", reaped.returnTo.length === 0);
+check("reap is persisted to disk", readControls().agentId === null);
+check(
+  "next gate check from the session (no PAI_WORKER_ID) is allowed",
+  checkAgentIdentity(reaped, undefined) === null
+);
+check(
+  "next gate check from an unrelated worker is still refused",
+  typeof checkAgentIdentity(reaped, "w9") === "string"
+);
+
+returnToUser();
 rmSync(sandboxHome, { recursive: true, force: true });
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

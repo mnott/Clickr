@@ -13,11 +13,13 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  delegateControl,
   formatGrantMinutes,
   grantToAgent,
   normalizeGrantMinutes,
   parseGrantDuration,
   readControls,
+  returnControl,
   returnToUser,
 } from "./controls.js";
 import { readLastSteps } from "./steps.js";
@@ -347,25 +349,77 @@ function doctor() {
 }
 
 /**
+ * Pulls `--agent <id>` and `--pid <n>` off an argv word list, in either order, before
+ * the rest is read as a grant window and note -- so `controls you --agent w1 for 2h
+ * note` and `controls you for 2h --agent w1 note` both work.
+ */
+function extractAgentFlags(words: string[]): { agentId?: string; agentPid?: number; rest: string[] } {
+  const rest: string[] = [];
+  let agentId: string | undefined;
+  let agentPid: number | undefined;
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] === "--agent" && i + 1 < words.length) {
+      agentId = words[++i];
+      continue;
+    }
+    if (words[i] === "--pid" && i + 1 < words.length) {
+      const parsed = parseInt(words[++i], 10);
+      if (Number.isFinite(parsed)) agentPid = parsed;
+      continue;
+    }
+    rest.push(words[i]);
+  }
+  return { agentId, agentPid, rest };
+}
+
+/** Renders a delegation chain, most recent first, for `clickr controls status`. */
+function formatChain(state: ReturnType<typeof readControls>): string {
+  const names = [state.agentId, ...[...state.returnTo].reverse().map((f) => f.agentId)];
+  return names.map((id) => id ?? "session").join(" <- ");
+}
+
+/**
  * `rest` is everything after the subcommand, still as separate argv words. It may open
- * with a grant window ("for 6 hours", "6h") and continue with a free-text note, so the
- * words are rejoined and handed to the same parser the spoken form uses -- one syntax,
- * whether the operator says it to the agent or types it in a terminal.
+ * with `--agent <id>` and/or `--pid <n>`, then a grant window ("for 6 hours", "6h") and
+ * a free-text note, so the remainder is rejoined and handed to the same parser the
+ * spoken form uses -- one syntax, whether the operator says it to the agent or types it
+ * in a terminal.
  */
 function controls(sub: string | undefined, rest: string[]) {
   const trailing = rest.join(" ").trim();
   switch (sub) {
     case "you": {
-      const requested = parseGrantDuration(trailing);
-      const note = (requested ? requested.rest : trailing) || undefined;
-      const state = grantToAgent(note, requested?.minutes);
+      const { agentId, agentPid, rest: afterFlags } = extractAgentFlags(rest);
+      const flagTrailing = afterFlags.join(" ").trim();
+      const requested = parseGrantDuration(flagTrailing);
+      const note = (requested ? requested.rest : flagTrailing) || undefined;
+      const current = readControls();
+      const state =
+        current.holder === "agent" && agentId
+          ? delegateControl(agentId, agentPid ?? null, note, requested?.minutes)
+          : grantToAgent(note, requested?.minutes, agentId ?? null, agentPid ?? null);
       console.log(
         c.ok(
           `controls handed to the agent — lapses after ` +
             `${formatGrantMinutes(normalizeGrantMinutes(state.minutes))} idle (${state.until})`
         )
       );
+      if (state.agentId) console.log(c.dim(`  agent: ${state.agentId}`));
       if (note) console.log(c.dim(`  note: ${note}`));
+      break;
+    }
+    case "return": {
+      const { agentId } = extractAgentFlags(rest);
+      if (!agentId) {
+        console.log(c.bad('"clickr controls return" requires --agent <id>'));
+        process.exit(1);
+      }
+      const { state, popped } = returnControl(agentId);
+      if (popped) {
+        console.log(c.ok(`controls returned from ${agentId} to ${state.agentId ?? "the session"}`));
+      } else {
+        console.log(c.warn(`controls are not delegated to ${agentId} -- nothing to return`));
+      }
       break;
     }
     case "me": {
@@ -385,6 +439,9 @@ function controls(sub: string | undefined, rest: string[]) {
       if (state.until) console.log(c.dim(`until:  ${state.until}`));
       if (state.holder === "agent") {
         console.log(c.dim(`window: ${formatGrantMinutes(normalizeGrantMinutes(state.minutes))} idle`));
+        if (state.agentId || state.returnTo.length > 0) {
+          console.log(c.dim(`agent:  ${formatChain(state)}`));
+        }
       }
       if (state.note) console.log(c.dim(`note:   ${state.note}`));
       break;
@@ -392,9 +449,10 @@ function controls(sub: string | undefined, rest: string[]) {
     default:
       console.log(c.bad(`unknown "clickr controls ${sub}"`));
       console.log();
-      console.log("  clickr controls you [for <n>] [note]  hand the controls to the agent");
-      console.log("  clickr controls me [note]             return the controls to the operator");
-      console.log("  clickr controls [status]              show who currently holds the controls");
+      console.log("  clickr controls you [--agent <id>] [--pid <n>] [for <n>] [note]  hand/delegate the controls");
+      console.log("  clickr controls return --agent <id>                              return a delegated grant");
+      console.log("  clickr controls me [note]                                        return the controls to the operator");
+      console.log("  clickr controls [status]                                         show who currently holds the controls");
       process.exit(1);
   }
 }
@@ -449,6 +507,8 @@ try {
       console.log("  clickr status                   show registration and permission status");
       console.log("  clickr doctor                   diagnose a broken install");
       console.log("  clickr controls you [for <n>]   hand the controls to the agent (default 30 min idle)");
+      console.log("  clickr controls you --agent <id> [--pid <n>]   hand/delegate to one named worker");
+      console.log("  clickr controls return --agent <id>   hand a delegated grant back");
       console.log("  clickr controls me              return the controls to the operator");
       console.log("  clickr controls [status]        show who currently holds the controls");
       console.log("  clickr steps [n]                print the last n logged agent steps (default 20)");

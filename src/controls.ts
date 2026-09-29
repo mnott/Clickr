@@ -20,6 +20,16 @@ import { join } from "node:path";
 
 export type Holder = "user" | "agent";
 
+/**
+ * A holder that a delegated grant can be handed back to. `agentId: null` means the
+ * plain session the operator originally granted (an interactive session, or a worker
+ * that itself received an untargeted grant) rather than any specific worker.
+ */
+export interface ControlsReturnFrame {
+  agentId: string | null;
+  agentPid: number | null;
+}
+
 export interface ControlsState {
   holder: Holder;
   since: string;
@@ -31,6 +41,28 @@ export interface ControlsState {
    */
   minutes?: number;
   note?: string;
+  /**
+   * Which worker process holds the grant, when it was made with `--agent <id>`. Several
+   * agents (interactive sessions, several PAI workers) can each have their own clickr
+   * MCP server, and a plain holder:"agent" grant does not say which one may act -- this
+   * narrows it to exactly one. Null means an untargeted grant (e.g. the operator saying
+   * "your controls" in an interactive session): only an interactive session, never a
+   * worker, may act on it. Always present after a read, never left `undefined`, so
+   * "no agent named" and "not read yet" can't be confused.
+   */
+  agentId: string | null;
+  /**
+   * The OS pid of the process behind `agentId`, when known -- what lets the gate detect
+   * a crashed worker and reap it (see `reapDeadHolder`). Null whenever `agentId` is, and
+   * whenever it isn't known.
+   */
+  agentPid: number | null;
+  /**
+   * Holders to fall back to as a delegated grant is returned, most recent last. Empty
+   * for a plain grant; grows by one frame per `delegateControl` call and shrinks by one
+   * per `returnControl` call or dead-process reap.
+   */
+  returnTo: ControlsReturnFrame[];
 }
 
 /** How long a grant to the agent lasts before it lapses on its own. */
@@ -124,7 +156,18 @@ function ensureStateDir(): void {
 }
 
 function userHolderNow(): ControlsState {
-  return { holder: "user", since: new Date().toISOString() };
+  return { holder: "user", since: new Date().toISOString(), agentId: null, agentPid: null, returnTo: [] };
+}
+
+/** Reads and validates a persisted `returnTo` array; malformed entries are dropped. */
+function parseReturnTo(value: unknown): ControlsReturnFrame[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((f): f is Record<string, unknown> => !!f && typeof f === "object")
+    .map((f) => ({
+      agentId: typeof f.agentId === "string" ? f.agentId : null,
+      agentPid: typeof f.agentPid === "number" ? f.agentPid : null,
+    }));
 }
 
 /**
@@ -152,7 +195,13 @@ export function readControls(): ControlsState {
       if (!Number.isFinite(untilMs) || untilMs <= Date.now()) return userHolderNow();
     }
 
-    const state: ControlsState = { holder: parsed.holder, since: parsed.since };
+    const state: ControlsState = {
+      holder: parsed.holder,
+      since: parsed.since,
+      agentId: typeof parsed.agentId === "string" ? parsed.agentId : null,
+      agentPid: typeof parsed.agentPid === "number" ? parsed.agentPid : null,
+      returnTo: parseReturnTo(parsed.returnTo),
+    };
     if (typeof parsed.until === "string") state.until = parsed.until;
     if (typeof parsed.minutes === "number") state.minutes = parsed.minutes;
     if (typeof parsed.note === "string") state.note = parsed.note;
@@ -172,8 +221,20 @@ function writeState(state: ControlsState): ControlsState {
  * Grants control to the agent, starting now. `minutes` is the idle window: control
  * lapses that long after the last actuating call, not that long after the grant. The
  * window is stored on the state so refreshGrant() can keep honouring it.
+ *
+ * `agentId` names which worker the grant is for -- typically a `PAI_WORKER_ID` -- so
+ * that of several agents sharing this machine, only that one may actuate. Null (the
+ * default) is an untargeted grant: only an interactive session (no `PAI_WORKER_ID` set)
+ * may actuate on it, never a worker. Always a fresh grant with an empty return stack --
+ * for handing an already-agent-held grant to a specific worker without disturbing the
+ * session's own window, see `delegateControl`.
  */
-export function grantToAgent(note?: string, minutes?: number): ControlsState {
+export function grantToAgent(
+  note?: string,
+  minutes?: number,
+  agentId?: string | null,
+  agentPid?: number | null
+): ControlsState {
   const window = normalizeGrantMinutes(minutes);
   const now = new Date();
   const until = new Date(now.getTime() + window * 60_000);
@@ -182,16 +243,150 @@ export function grantToAgent(note?: string, minutes?: number): ControlsState {
     since: now.toISOString(),
     until: until.toISOString(),
     minutes: window,
+    agentId: agentId ?? null,
+    agentPid: agentPid ?? null,
+    returnTo: [],
   };
   if (note) state.note = note;
   return writeState(state);
 }
 
-/** Returns control to the operator. */
+/** Returns control to the operator, clearing any agent identity and return stack. */
 export function returnToUser(note?: string): ControlsState {
-  const state: ControlsState = { holder: "user", since: new Date().toISOString() };
+  const state: ControlsState = {
+    holder: "user",
+    since: new Date().toISOString(),
+    agentId: null,
+    agentPid: null,
+    returnTo: [],
+  };
   if (note) state.note = note;
   return writeState(state);
+}
+
+/**
+ * Delegates an already-agent-held grant to a specific worker, pushing whoever holds it
+ * now (an id, or null for the plain session) onto a return stack -- so `returnControl`
+ * or a dead-process reap can hand it back later. Keeps the current grant's `since`,
+ * window and expiry unchanged unless `minutes` names a new one: a worker briefly taking
+ * the wheel must not shorten or reset an overnight grant the operator made to the
+ * session.
+ */
+export function delegateControl(
+  agentId: string,
+  agentPid: number | null,
+  note?: string,
+  minutes?: number
+): ControlsState {
+  const current = readControls();
+  const frame: ControlsReturnFrame = { agentId: current.agentId, agentPid: current.agentPid };
+  const window = minutes !== undefined ? normalizeGrantMinutes(minutes) : normalizeGrantMinutes(current.minutes);
+  const until =
+    minutes !== undefined
+      ? new Date(Date.now() + window * 60_000).toISOString()
+      : current.until ?? new Date(Date.now() + window * 60_000).toISOString();
+  const state: ControlsState = {
+    holder: "agent",
+    since: current.since,
+    until,
+    minutes: window,
+    agentId,
+    agentPid,
+    returnTo: [...current.returnTo, frame],
+  };
+  const finalNote = note ?? current.note;
+  if (finalNote) state.note = finalNote;
+  return writeState(state);
+}
+
+/**
+ * Hands a delegated grant back, one level, but only when `agentId` is the worker the
+ * grant is currently delegated to -- anyone else's `return` is a no-op, reported back
+ * via `popped: false` rather than silently doing nothing.
+ */
+export function returnControl(agentId: string): { state: ControlsState; popped: boolean } {
+  const current = readControls();
+  if (current.holder !== "agent" || current.agentId !== agentId || current.returnTo.length === 0) {
+    return { state: current, popped: false };
+  }
+  const stack = [...current.returnTo];
+  const restored = stack.pop() as ControlsReturnFrame;
+  const state: ControlsState = {
+    holder: "agent",
+    since: current.since,
+    until: current.until,
+    minutes: current.minutes,
+    agentId: restored.agentId,
+    agentPid: restored.agentPid,
+    returnTo: stack,
+  };
+  if (current.note) state.note = current.note;
+  return { state: writeState(state), popped: true };
+}
+
+/** Whether the process at `pid` is still alive. */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    // EPERM means the process exists but we may not signal it -- still alive. Anything
+    // else (chiefly ESRCH, "no such process") means it is gone.
+    return err?.code === "EPERM";
+  }
+}
+
+/**
+ * If the process currently holding a delegated grant has died, restores whoever it was
+ * delegated from -- repeating while that one is also dead -- so a crashed worker can
+ * never leave the grant's original holder permanently locked out. Persists the result
+ * and logs one line per pop to stderr (never stdout: the MCP server speaks JSON-RPC
+ * there). A no-op, returning `state` unchanged, when there is nothing to reap.
+ */
+export function reapDeadHolder(state: ControlsState): ControlsState {
+  if (state.holder !== "agent") return state;
+  let current = state;
+  let popped = false;
+  while (
+    current.agentId !== null &&
+    current.agentPid !== null &&
+    !isPidAlive(current.agentPid) &&
+    current.returnTo.length > 0
+  ) {
+    const stack = [...current.returnTo];
+    const restored = stack.pop() as ControlsReturnFrame;
+    console.error(
+      `clickr: worker ${current.agentId} (pid ${current.agentPid}) is gone -- returning controls to ` +
+        (restored.agentId ?? "the session")
+    );
+    current = { ...current, agentId: restored.agentId, agentPid: restored.agentPid, returnTo: stack };
+    popped = true;
+  }
+  return popped ? writeState(current) : state;
+}
+
+/**
+ * Whether an actuating call from this process may proceed once the basic holder:"agent"
+ * check has already passed -- and if not, the refusal message to show instead. `workerId`
+ * is `process.env.PAI_WORKER_ID`: unset for an interactive session, set to a worker's id
+ * inside a `pai worker run`.
+ *
+ * A grant targeted at a specific worker (`state.agentId` set) may only be actuated by
+ * that worker. An untargeted grant (`state.agentId` null -- the operator said "your
+ * controls" in a session) may only be actuated by that session directly, never by a
+ * worker it spawned: a worker must be delegated control by name first.
+ */
+export function checkAgentIdentity(state: ControlsState, workerId: string | undefined): string | null {
+  if (state.agentId) {
+    return workerId === state.agentId ? null : `controls are held by worker ${state.agentId}`;
+  }
+  if (workerId) {
+    return (
+      "controls were handed to the session, not to this worker -- ask the operator: " +
+      `pai worker controls ${workerId} you`
+    );
+  }
+  return null;
 }
 
 /**
@@ -218,6 +413,9 @@ export function refreshGrant(): void {
       since: current.since,
       until: until.toISOString(),
       minutes: window,
+      agentId: current.agentId,
+      agentPid: current.agentPid,
+      returnTo: current.returnTo,
     };
     if (current.note) state.note = current.note;
     writeState(state);
@@ -278,7 +476,13 @@ function readRawState(): ControlsState | null {
     if (!parsed || typeof parsed !== "object") return null;
     if (parsed.holder !== "user" && parsed.holder !== "agent") return null;
     if (typeof parsed.since !== "string") return null;
-    const state: ControlsState = { holder: parsed.holder, since: parsed.since };
+    const state: ControlsState = {
+      holder: parsed.holder,
+      since: parsed.since,
+      agentId: typeof parsed.agentId === "string" ? parsed.agentId : null,
+      agentPid: typeof parsed.agentPid === "number" ? parsed.agentPid : null,
+      returnTo: parseReturnTo(parsed.returnTo),
+    };
     if (typeof parsed.until === "string") state.until = parsed.until;
     if (typeof parsed.minutes === "number") state.minutes = parsed.minutes;
     if (typeof parsed.note === "string") state.note = parsed.note;
