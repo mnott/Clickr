@@ -262,6 +262,41 @@ check(
   typeof checkAgentIdentity(reaped, "w9") === "string"
 );
 
+console.log("\n\"your controls\" inside a worker's own session binds the grant to that worker");
+returnToUser();
+const wGrant = grantToAgent(undefined, undefined, "w-self");
+check("agentId is the worker's own id", wGrant.agentId === "w-self", wGrant.agentId);
+check("no pid recorded (would let reapDeadHolder drop it)", wGrant.agentPid === null, wGrant.agentPid);
+check(
+  "that same worker's identity check now passes",
+  checkAgentIdentity(readControls(), "w-self") === null
+);
+
+returnToUser();
+const plainGrant = grantToAgent();
+check("PAI_WORKER_ID unset -> agentId stays null (unchanged behaviour)", plainGrant.agentId === null);
+check(
+  "an interactive session (no env) still passes the identity check",
+  checkAgentIdentity(readControls(), undefined) === null
+);
+
+console.log("\nthe hook binds the grant to PAI_WORKER_ID when the hook itself runs inside a worker");
+returnToUser();
+function runHookAsWorker(prompt, workerId) {
+  const out = execFileSync(process.execPath, [join(repoRoot, "dist", "hook.js")], {
+    input: JSON.stringify({ prompt }),
+    env: { ...process.env, HOME: sandboxHome, PAI_WORKER_ID: workerId },
+    encoding: "utf8",
+  });
+  return { out: out.trim(), state: readControls() };
+}
+const hookAsWorker = runHookAsWorker("ok, your controls", "w-hook");
+check("hook grant is targeted at the worker", hookAsWorker.state.agentId === "w-hook", hookAsWorker.state.agentId);
+check(
+  "that worker's own identity check now passes",
+  checkAgentIdentity(hookAsWorker.state, "w-hook") === null
+);
+
 returnToUser();
 rmSync(sandboxHome, { recursive: true, force: true });
 

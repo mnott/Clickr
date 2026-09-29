@@ -981,8 +981,15 @@ export const tools: Tool[] = [
       if (a.holder !== "agent" && a.holder !== "user") {
         throw new Error('holder must be "agent" or "user".');
       }
+      // Bind the grant to this process's own worker identity, if any -- an untargeted
+      // grant is refused by checkAgentIdentity() for any caller with PAI_WORKER_ID set,
+      // which would leave the very session the operator just spoke to unable to act. No
+      // pid: nothing here tracks this server's own process lifetime as a delegation
+      // target, and a stale pid would make reapDeadHolder drop the grant wrongly.
       const state =
-        a.holder === "agent" ? grantToAgent(a.note, a.minutes) : returnToUser(a.note);
+        a.holder === "agent"
+          ? grantToAgent(a.note, a.minutes, process.env.PAI_WORKER_ID || null)
+          : returnToUser(a.note);
       const lines = [
         `Controls: ${state.holder === "agent" ? "AGENT" : "OPERATOR"}`,
         `since: ${state.since}`,
