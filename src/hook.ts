@@ -104,7 +104,13 @@ async function main(): Promise<void> {
     if (handover.holder === "agent") {
       // "your controls for 6 hours" -- an explicit window replaces the default one.
       const requested = parseGrantDuration(handover.tail);
-      const state = grantToAgent(undefined, requested?.minutes);
+      // When this hook itself runs inside a worker (PAI_WORKER_ID set), the grant must be
+      // bound to that worker's own identity -- an untargeted grant is refused by
+      // checkAgentIdentity() for any caller with PAI_WORKER_ID set, which would leave the
+      // very session the operator just spoke to unable to act. No pid: the hook's parent
+      // may be a short-lived shell, and a pid that exits would make reapDeadHolder drop
+      // the grant immediately.
+      const state = grantToAgent(undefined, requested?.minutes, process.env.PAI_WORKER_ID || null);
       console.log(
         `Clickr: controls handed to the agent (lapses after ` +
           `${formatGrantMinutes(normalizeGrantMinutes(state.minutes))} idle).`

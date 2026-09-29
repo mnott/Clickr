@@ -228,6 +228,11 @@ function writeState(state: ControlsState): ControlsState {
  * may actuate on it, never a worker. Always a fresh grant with an empty return stack --
  * for handing an already-agent-held grant to a specific worker without disturbing the
  * session's own window, see `delegateControl`.
+ *
+ * Callers that may themselves be running inside a worker -- the UserPromptSubmit hook
+ * and the `controls` MCP tool -- pass their own `PAI_WORKER_ID` here so "your controls"
+ * spoken to a worker's own interactive session grants that worker, not an untargeted
+ * grant only a plain session could use.
  */
 export function grantToAgent(
   note?: string,
@@ -373,8 +378,11 @@ export function reapDeadHolder(state: ControlsState): ControlsState {
  *
  * A grant targeted at a specific worker (`state.agentId` set) may only be actuated by
  * that worker. An untargeted grant (`state.agentId` null -- the operator said "your
- * controls" in a session) may only be actuated by that session directly, never by a
- * worker it spawned: a worker must be delegated control by name first.
+ * controls" in a plain interactive session, one with no `PAI_WORKER_ID` of its own) may
+ * only be actuated by that session directly, never by a worker it spawned: a worker must
+ * be delegated control by name first. When the operator instead says "your controls" to
+ * a session that is itself a worker, that session's own `PAI_WORKER_ID` is used as
+ * `agentId` (see `grantToAgent`), so this untargeted case does not apply to it.
  */
 export function checkAgentIdentity(state: ControlsState, workerId: string | undefined): string | null {
   if (state.agentId) {
