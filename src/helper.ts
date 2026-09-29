@@ -18,6 +18,18 @@ function helperPath(): string {
   );
 }
 
+/**
+ * Env for spawning clickr-helper: never leak an API key into a spawned process,
+ * and strip __CFBundleIdentifier (iTerm2 sets this in its own shells) so
+ * LaunchServices doesn't register the helper as iTerm2 and misroute AppleScript to it.
+ */
+export function helperEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
+  delete env.__CFBundleIdentifier;
+  return env;
+}
+
 type Pending = {
   resolve: (v: Record<string, any>) => void;
   reject: (e: Error) => void;
@@ -36,13 +48,9 @@ class Helper {
   private nextId = 1;
 
   private start(): ChildProcessWithoutNullStreams {
-    // Never leak an API key into a spawned process.
-    const env = { ...process.env };
-    delete env.ANTHROPIC_API_KEY;
-
     const proc = spawn(helperPath(), [], {
       stdio: ["pipe", "pipe", "pipe"],
-      env,
+      env: helperEnv(),
     });
 
     proc.stdout.setEncoding("utf8");

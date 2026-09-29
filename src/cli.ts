@@ -22,6 +22,7 @@ import {
   returnControl,
   returnToUser,
 } from "./controls.js";
+import { helperEnv } from "./helper.js";
 import { readLastSteps } from "./steps.js";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -132,6 +133,7 @@ function permissions(): { accessibility: boolean; screenRecording: boolean } | n
       input: JSON.stringify({ cmd: "permissions" }) + "\n",
       encoding: "utf8",
       timeout: 10_000,
+      env: helperEnv(),
     });
     const line = out.split("\n").find((l) => l.trim());
     const parsed = JSON.parse(line ?? "{}");
@@ -333,6 +335,7 @@ function doctor() {
         input: JSON.stringify({ cmd: "displays" }) + "\n",
         encoding: "utf8",
         timeout: 10_000,
+        env: helperEnv(),
       });
       const parsed = JSON.parse(out.split("\n").find((l) => l.trim()) ?? "{}");
       const displays = parsed.displays ?? [];

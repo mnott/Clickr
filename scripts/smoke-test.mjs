@@ -56,7 +56,7 @@ proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initial
 
 const list = await rpc("tools/list", {});
 const names = (list.result?.tools ?? []).map((t) => t.name);
-check("tools/list", names.length === 19, `${names.length} tools: ${names.join(", ")}`);
+check("tools/list", names.length === 20, `${names.length} tools: ${names.join(", ")}`);
 
 const perms = await rpc("tools/call", { name: "check_permissions", arguments: {} });
 check("check_permissions", !perms.result?.isError, textOf(perms).replace(/\n/g, " | "));
