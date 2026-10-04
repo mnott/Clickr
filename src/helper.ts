@@ -21,8 +21,9 @@ function helperPath(): string {
 /**
  * Env for spawning clickr-helper: never leak an API key into a spawned process,
  * and strip __CFBundleIdentifier (iTerm2 sets this in its own shells). The real fix
- * against LaunchServices registering the helper as iTerm2 is the Info.plist embedded
- * at link time (native/clickr-helper-Info.plist); this strip is defence in depth.
+ * against LaunchServices registering the helper as iTerm2 is the ClickrHelper.app
+ * bundle built by scripts/build-native.sh with its own identity (dev.clickr.helper);
+ * this strip is defence in depth.
  */
 export function helperEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
