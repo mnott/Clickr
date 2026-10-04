@@ -1,5 +1,5 @@
 // Drives the MCP server over real stdio JSON-RPC, the same way a client does.
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 
 const outDir = process.argv[2] ?? "/tmp";
@@ -171,6 +171,20 @@ const forced = await rpc("tools/call", {
 });
 check("skipIfUnchanged:false forces a fresh image",
   (forced.result?.content ?? []).some((c) => c.type === "image"));
+
+// The helper must not be registered with LaunchServices under its launcher's identity (iTerm2),
+// or AppleScript to that app is routed to the helper. list_apps / find_elements above touched NSWorkspace.
+try {
+  const helperPid = execFileSync("pgrep", ["-P", String(proc.pid), "-f", "clickr-helper"], { encoding: "utf8" }).trim().split("\n")[0];
+  const asn = execFileSync("lsappinfo", ["find", `pid=${helperPid}`], { encoding: "utf8" }).trim();
+  const info = asn ? execFileSync("lsappinfo", ["info", asn], { encoding: "utf8" }) : "";
+  const bundleId = /bundleID="([^"]*)"/.exec(info)?.[1] ?? "(not registered)";
+  console.log(`      helper pid ${helperPid}: ${info.split("\n")[0] || bundleId}`);
+  check("helper not registered as its launcher app",
+    bundleId !== "com.googlecode.iterm2" && (!asn || bundleId === "dev.clickr.helper" || bundleId === "(not registered)"), bundleId);
+} catch (e) {
+  console.log(`SKIP  helper LaunchServices identity (${e.code ?? e.message})`);
+}
 
 console.log(fails.length ? `\n${fails.length} FAILURE(S): ${fails.join(", ")}` : "\nAll checks passed.");
 proc.kill();

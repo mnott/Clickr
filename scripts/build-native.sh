@@ -19,6 +19,8 @@ swiftc -O -swift-version 5 \
   -framework ApplicationServices \
   -framework ImageIO \
   -framework CoreText \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist \
+  -Xlinker "$ROOT/native/clickr-helper-Info.plist" \
   -o "$OUT" "$SRC"
 
 chmod +x "$OUT"
