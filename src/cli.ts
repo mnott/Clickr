@@ -107,8 +107,13 @@ function uninstallHook(config: Record<string, any>): boolean {
   return true;
 }
 
+function helperBin(): string {
+  const app = join(packageRoot, "bin", "ClickrHelper.app", "Contents", "MacOS", "clickr-helper");
+  return existsSync(app) ? app : join(packageRoot, "bin", "clickr-helper");
+}
+
 function helperBuilt(): boolean {
-  return existsSync(join(packageRoot, "bin", "clickr-helper"));
+  return existsSync(helperBin());
 }
 
 function serverBuilt(): boolean {
@@ -126,7 +131,7 @@ function buildNative(): boolean {
 }
 
 function permissions(): { accessibility: boolean; screenRecording: boolean } | null {
-  const helper = join(packageRoot, "bin", "clickr-helper");
+  const helper = helperBin();
   if (!existsSync(helper)) return null;
   try {
     const out = execFileSync(helper, [], {
@@ -330,7 +335,7 @@ function doctor() {
 
   if (helperBuilt()) {
     try {
-      const helper = join(packageRoot, "bin", "clickr-helper");
+      const helper = helperBin();
       const out = execFileSync(helper, [], {
         input: JSON.stringify({ cmd: "displays" }) + "\n",
         encoding: "utf8",

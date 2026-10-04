@@ -7,10 +7,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 /** Located relative to the package root so it works from dist/ or src/. */
 function helperPath(): string {
-  const candidates = [
-    join(here, "..", "bin", "clickr-helper"),
-    join(here, "..", "..", "bin", "clickr-helper"),
-  ];
+  const candidates = ["..", join("..", "..")].flatMap((up) => [
+    join(here, up, "bin", "ClickrHelper.app", "Contents", "MacOS", "clickr-helper"),
+    join(here, up, "bin", "clickr-helper"),
+  ]);
   for (const c of candidates) if (existsSync(c)) return c;
   throw new Error(
     `clickr-helper binary not found (looked in: ${candidates.join(", ")}). ` +

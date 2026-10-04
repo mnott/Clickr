@@ -1,6 +1,6 @@
 // Drives the MCP server over real stdio JSON-RPC, the same way a client does.
 import { spawn, execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, existsSync } from "node:fs";
 
 const outDir = process.argv[2] ?? "/tmp";
 const proc = spawn("node", ["dist/index.js"], { stdio: ["pipe", "pipe", "inherit"] });
@@ -174,17 +174,26 @@ check("skipIfUnchanged:false forces a fresh image",
 
 // The helper must not be registered with LaunchServices under its launcher's identity (iTerm2),
 // or AppleScript to that app is routed to the helper. list_apps / find_elements above touched NSWorkspace.
+let probe;
 try {
-  const helperPid = execFileSync("pgrep", ["-P", String(proc.pid), "-f", "clickr-helper"], { encoding: "utf8" }).trim().split("\n")[0];
-  const asn = execFileSync("lsappinfo", ["find", `pid=${helperPid}`], { encoding: "utf8" }).trim();
+  // Real trigger: `activate` makes LaunchServices check the helper in. Target is already frontmost.
+  const front = execFileSync("lsappinfo", ["front"], { encoding: "utf8" }).trim();
+  const frontPid = /pid\s*=\s*(\d+)/.exec(execFileSync("lsappinfo", ["info", "-only", "pid", front], { encoding: "utf8" }))?.[1];
+  const helperBin = existsSync("bin/ClickrHelper.app/Contents/MacOS/clickr-helper")
+    ? "bin/ClickrHelper.app/Contents/MacOS/clickr-helper" : "bin/clickr-helper";
+  probe = spawn(helperBin, [], { stdio: ["pipe", "ignore", "inherit"] });
+  probe.stdin.write(JSON.stringify({ id: 1, cmd: "activate", pid: Number(frontPid) }) + "\n");
+  await new Promise((r) => setTimeout(r, 2500));
+  const asn = execFileSync("lsappinfo", ["find", `pid=${probe.pid}`], { encoding: "utf8" }).trim();
   const info = asn ? execFileSync("lsappinfo", ["info", asn], { encoding: "utf8" }) : "";
   const bundleId = /bundleID="([^"]*)"/.exec(info)?.[1] ?? "(not registered)";
-  console.log(`      helper pid ${helperPid}: ${info.split("\n")[0] || bundleId}`);
+  console.log(`      helper pid ${probe.pid} after activate(pid ${frontPid}): ${bundleId}`);
   check("helper not registered as its launcher app",
-    bundleId !== "com.googlecode.iterm2" && (!asn || bundleId === "dev.clickr.helper" || bundleId === "(not registered)"), bundleId);
+    bundleId !== "com.googlecode.iterm2" && (bundleId === "dev.clickr.helper" || bundleId === "(not registered)"), bundleId);
 } catch (e) {
   console.log(`SKIP  helper LaunchServices identity (${e.code ?? e.message})`);
 }
+probe?.kill();
 
 console.log(fails.length ? `\n${fails.length} FAILURE(S): ${fails.join(", ")}` : "\nAll checks passed.");
 proc.kill();
