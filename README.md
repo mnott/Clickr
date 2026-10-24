@@ -17,8 +17,10 @@ Tell Claude Code:
 Or install with a single command:
 
 ```bash
-npm install -g @tekmidian/clickr && clickr install
+npm i -g https://github.com/mnott/Clickr/releases/latest/download/clickr.tgz && clickr install
 ```
+
+Update: `pai update --package @tekmidian/clickr`. The npm registry is no longer updated; releases come from GitHub.
 
 Or manually, if you want the tests and a checkout:
 
