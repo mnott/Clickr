@@ -38,6 +38,10 @@ clickr's own niche is the native macOS Open/Save dialog — unreachable from a b
 
 WHEN YOU DO TAKE OVER, TELL THE USER FIRST: roughly how long, and to keep hands off the mouse and keyboard until you say you are done. They cannot know otherwise, and their stray keystroke corrupts your work as surely as yours corrupts theirs.
 
+## Locked screen
+
+A locked screen blocks clicks — they hit the login shield — and \`list_windows\` with its default \`onScreenOnly:true\` returns nothing, but visual checks still work. Open a menu-bar item or popover through accessibility without a mouse event (System Events: \`click menu bar item 1 of menu bar 2\` of the app's process, via the macOS automation tool), find the window id from the full window list — \`list_windows\` with \`onScreenOnly:false\` (add \`includeAllLayers:true\` for menus and panels) — then \`screenshot\` with \`window:<id>\`, which composites the window regardless of screen state. Never conclude that a locked screen rules out a visual check.
+
 ## Coordinates
 
 All coordinates are GLOBAL POINTS: origin at the top-left of the main display, +y down, in points rather than device pixels. Displays left of or above the main one have NEGATIVE coordinates, and any number of displays is supported. find_elements, list_windows, list_displays, screenshot and click all speak this same space, so a value from one goes straight into another.
