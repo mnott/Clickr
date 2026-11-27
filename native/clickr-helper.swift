@@ -47,6 +47,15 @@ func num(_ v: Any?) -> Double? {
     return nil
 }
 
+/// Converts an agent-supplied number to Int without trapping: nil/NaN fall back to
+/// `default`, everything else is clamped to lo...hi BEFORE the conversion.
+func clampInt(_ v: Double?, default dflt: Int, min lo: Int, max hi: Int) -> Int {
+    guard let v = v, !v.isNaN else { return dflt }
+    if v <= Double(lo) { return lo }
+    if v >= Double(hi) { return hi }
+    return Int(v)
+}
+
 func req(_ obj: [String: Any], _ key: String) throws -> Double {
     guard let v = num(obj[key]) else { throw HelperError("missing or non-numeric parameter '\(key)'") }
     return v
@@ -450,7 +459,7 @@ func doClick(_ obj: [String: Any]) throws -> [String: Any] {
     try verifyTarget(obj, at: point)
     let (button, down, up, _) = mouseButton(obj["button"] as? String)
     let mods = flags(from: obj["modifiers"])
-    let count = max(1, min(3, Int(num(obj["count"]) ?? 1)))
+    let count = clampInt(num(obj["count"]), default: 1, min: 1, max: 3)
     let restore = obj["restore"] as? Bool ?? false
     let origin = currentMouse()
 
@@ -530,7 +539,7 @@ func doDrag(_ obj: [String: Any]) throws -> [String: Any] {
     try verifyTarget(obj, at: from)
     let (button, down, up, dragged) = mouseButton(obj["button"] as? String)
     let mods = flags(from: obj["modifiers"])
-    let steps = max(2, min(200, Int(num(obj["steps"]) ?? 25)))
+    let steps = clampInt(num(obj["steps"]), default: 25, min: 2, max: 200)
 
     postMouse(.mouseMoved, from, .left, [])
     usleep(40_000)
@@ -557,8 +566,8 @@ func doScroll(_ obj: [String: Any]) throws -> [String: Any] {
         postMouse(.mouseMoved, CGPoint(x: x, y: y), .left, [])
         usleep(30_000)
     }
-    let dx = Int32(num(obj["dx"]) ?? 0)
-    let dy = Int32(num(obj["dy"]) ?? 0)
+    let dx = Int32(clampInt(num(obj["dx"]), default: 0, min: -100000, max: 100000))
+    let dy = Int32(clampInt(num(obj["dy"]), default: 0, min: -100000, max: 100000))
     let unit: CGScrollEventUnit = (obj["units"] as? String)?.lowercased() == "pixel" ? .pixel : .line
     let mods = flags(from: obj["modifiers"])
     guard let e = CGEvent(scrollWheelEvent2Source: eventSource, units: unit,
@@ -635,7 +644,7 @@ func doKey(_ obj: [String: Any]) throws -> [String: Any] {
     }
     let destination = try verifyDestination(obj)
     let mods = flags(from: obj["modifiers"])
-    let count = max(1, min(100, Int(num(obj["count"]) ?? 1)))
+    let count = clampInt(num(obj["count"]), default: 1, min: 1, max: 100)
     try holdingModifiers(mods) {
         for _ in 1...count {
             guard let down = CGEvent(keyboardEventSource: eventSource, virtualKey: code, keyDown: true),
@@ -707,7 +716,7 @@ func resolveWindow(_ obj: [String: Any], pid: pid_t) throws -> (AXUIElement, Int
     let windows = try axWindows(pid: pid)
     guard !windows.isEmpty else { throw HelperError("application has no windows") }
 
-    if let wid = num(obj["windowId"]).map({ Int($0) }) {
+    if let wid = num(obj["windowId"]).map({ clampInt($0, default: 0, min: 0, max: Int(Int32.max)) }) {
         let cgWindows = windowList(appFilter: nil, onScreenOnly: false, includeAllLayers: true)
         guard let cg = cgWindows.first(where: { ($0["windowId"] as? Int) == wid }) else {
             throw HelperError("no window with id \(wid); call list_windows for current ids")
@@ -737,7 +746,7 @@ func resolveWindow(_ obj: [String: Any], pid: pid_t) throws -> (AXUIElement, Int
         return (window, idx, "windowId \(wid)")
     }
 
-    let idx = Int(num(obj["windowIndex"]) ?? 0)
+    let idx = clampInt(num(obj["windowIndex"]), default: 0, min: 0, max: 100000)
     guard idx >= 0 && idx < windows.count else {
         throw HelperError("windowIndex \(idx) out of range; app has \(windows.count) window(s)")
     }
@@ -932,18 +941,18 @@ func doFindElements(_ obj: [String: Any]) throws -> [String: Any] {
         includeOffscreen: obj["includeOffscreen"] as? Bool ?? false,
         bounds: bounds)
 
-    let maxDepth = Int(num(obj["maxDepth"]) ?? 18)
-    let maxResults = Int(num(obj["maxResults"]) ?? 40)
-    let nodeBudget = Int(num(obj["nodeBudget"]) ?? 20000)
+    let maxDepth = clampInt(num(obj["maxDepth"]), default: 18, min: 0, max: 1000)
+    let maxResults = clampInt(num(obj["maxResults"]), default: 40, min: 0, max: 100000)
+    let nodeBudget = clampInt(num(obj["nodeBudget"]), default: 20000, min: 0, max: 10000000)
 
     // Searching a single window is dramatically cheaper than the whole app.
     var root = axApp
     var scope = "application"
-    if let wid = num(obj["windowId"]).map({ Int($0) }) {
+    if let wid = num(obj["windowId"]).map({ clampInt($0, default: 0, min: 0, max: Int(Int32.max)) }) {
         let (window, _, matchedBy) = try resolveWindow(["windowId": wid], pid: pid)
         root = window
         scope = matchedBy
-    } else if let idx = num(obj["windowIndex"]).map({ Int($0) }) {
+    } else if let idx = num(obj["windowIndex"]).map({ clampInt($0, default: 0, min: 0, max: 100000) }) {
         let (window, _, matchedBy) = try resolveWindow(["windowIndex": idx], pid: pid)
         root = window
         scope = matchedBy
@@ -1034,7 +1043,7 @@ func doSetWindow(_ obj: [String: Any]) throws -> [String: Any] {
     try requireAccessibility()
     var lookup = obj
     // A windowId already identifies the owning process; don't make callers repeat it.
-    if let wid = num(obj["windowId"]).map({ Int($0) }), obj["pid"] == nil,
+    if let wid = num(obj["windowId"]).map({ clampInt($0, default: 0, min: 0, max: Int(Int32.max)) }), obj["pid"] == nil,
         obj["name"] == nil, obj["bundleId"] == nil {
         let cgWindows = windowList(appFilter: nil, onScreenOnly: false, includeAllLayers: true)
         guard let cg = cgWindows.first(where: { ($0["windowId"] as? Int) == wid }) else {
@@ -1292,8 +1301,8 @@ func doImage(_ obj: [String: Any]) throws -> [String: Any] {
         image = cropped
     }
 
-    let targetW = max(1, Int(num(obj["targetW"]) ?? Double(image.width)))
-    let targetH = max(1, Int(num(obj["targetH"]) ?? Double(image.height)))
+    let targetW = clampInt(num(obj["targetW"]), default: image.width, min: 1, max: 16384)
+    let targetH = clampInt(num(obj["targetH"]), default: image.height, min: 1, max: 16384)
     let grid = obj["grid"] as? [String: Any]
 
     // Redraw at the target size (also gives us a context to overlay the grid on).
@@ -1405,7 +1414,7 @@ func doOCR(_ obj: [String: Any]) throws -> [String: Any] {
 /// target unoccluded, so its image can show content that is really hidden — and a
 /// click at those coordinates would land on whatever is actually on top.
 func doOcclusion(_ obj: [String: Any]) throws -> [String: Any] {
-    let wid = Int(try req(obj, "windowId"))
+    let wid = clampInt(try req(obj, "windowId"), default: 0, min: 0, max: Int(Int32.max))
     guard let raw = CGWindowListCopyWindowInfo(
         [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
     else { throw HelperError("could not read the window list") }
