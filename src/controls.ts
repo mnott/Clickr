@@ -563,3 +563,16 @@ export function allowedInReadonly(toolName: string): boolean {
 
 export const READONLY_ERROR =
   "Clickr is in read-only mode: this tool is disabled. Only observing tools are available.";
+
+/**
+ * Argument-level read-only guard: `screenshot` stays available but its `savePath` would write
+ * a file, which observation-only mode must not do. Returns an error message, or null if fine.
+ */
+export function readonlyArgError(toolName: string, args: Record<string, unknown> | undefined): string | null {
+  if (toolName !== "screenshot") return null;
+  const sp = args?.savePath;
+  if (typeof sp === "string" ? sp.trim() !== "" : sp != null && sp !== false) {
+    return "savePath is disabled in read-only mode: screenshots cannot be written to disk.";
+  }
+  return null;
+}
