@@ -1,91 +1,12 @@
 /**
- * Everything an agent needs to operate clickr correctly.
- *
- * This is the single source of truth for agent-facing guidance, and it ships inside
- * the MCP server itself so it reaches every session automatically — no skill to
- * install, no README to have read. The README is for humans deciding whether to use
- * clickr and how to install it; it deliberately does not repeat these rules.
- *
- * Per-tool detail lives in the individual tool descriptions instead of here, because
- * those are fetched on demand while this text is loaded in every session.
+ * Short, always-loaded essentials. The full guidance is NOT duplicated here: its single
+ * source is skills/Clickr/SKILL.md, which the server serves as the MCP resource
+ * skill://clickr/SKILL.md and the MCP prompt `clickr-skill` (see skill.ts), and which
+ * `clickr install` copies to ~/.claude/skills/Clickr for Claude Code.
  */
-export const INSTRUCTIONS = `clickr drives this Mac's screen and input devices directly: it captures any display region and posts real mouse and keyboard events, so it can operate any application without that application exposing a scripting interface.
+export const INSTRUCTIONS = `clickr drives this Mac's screen, mouse and keyboard. FULL GUIDANCE: read the MCP resource skill://clickr/SKILL.md (or fetch the prompt "clickr-skill") before first use; the essentials follow for clients without resource support.
 
-## Control handover — read this before touching anything
-
-The actuating tools (click, move_mouse, drag, scroll, type_text, press_key, activate_app, set_window_bounds, set_clipboard) only work once the operator has explicitly handed control to the agent — by saying "your controls" out loud, or by running \`clickr controls you\` in a terminal. Calling an actuating tool before that returns an error explaining the operator must hand over first, and that error names whether a prior grant simply lapsed or was never given at all; read-only tools (screenshot, find_elements, read_text, list_windows, list_displays, list_apps, element_at, get_mouse_position, get_clipboard, check_permissions) always work regardless of who holds control.
-
-This is a CLARITY mechanism, not a security boundary, and that is worth being explicit about rather than leaving implied. With clickr's own UserPromptSubmit hook installed (set up automatically by \`clickr install\`), the operator's spoken phrase is authoritative: the hook watches every submitted prompt directly and updates the control state before the agent ever sees the message, so the agent has no opportunity to mishear, forget, or delay the handover. Without that hook installed, nothing observes the conversation at all, and the fallback is the agent itself calling the \`controls\` tool with holder:"agent" in direct response to the operator having JUST said "your controls" — do this ONLY as a relay of something the operator just said, never on your own initiative, since granting yourself control on your own initiative defeats the entire point of the gate. Either way, the operator could always run \`clickr controls you\`/\`clickr controls me\` from a terminal directly, so treat this as guidance for normal cooperative use, not a defense against an adversarial agent.
-
-A grant lapses on its own after 30 minutes of INACTIVITY — every actuating call restarts that clock, so a session in continuous use never lapses, while one left idle does and needs a fresh handover. The operator can name a longer window when handing over: "your controls for 6 hours", or \`clickr controls you for 6 hours\`. That window is remembered and applies to every refresh, up to a maximum of 24 hours. If you are relaying a handover yourself (hook not installed) and the operator named a window, pass it as \`minutes\` on the \`controls\` tool — 6 hours is minutes:360. When the operator says "my controls" (or runs \`clickr controls me\`), and the hook is not installed, call \`controls\` with holder:"user" and stop touching the mouse and keyboard immediately.
-
-Every actuating call must also include a \`step\`: one short plain-English sentence saying what this call is about to do and why. Calls missing it are rejected — the sentence is shown to the operator alongside the result and logged, so it is how they follow what you are doing to their machine.
-
-## Choosing how to drive the computer
-
-FIRST ASK: is the visible interaction itself what the user wants? If they asked to be shown something — "show me how to do a pivot table in Excel", "walk me through this dialog" — use clickr directly. Watching it happen is the deliverable, and doing it headlessly with a script misses the request entirely.
-
-Otherwise the goal is the end state, so take as little of the user's machine as possible. The ordering below is NOT mainly about tokens; it is about whether the user can keep working. clickr moves the real pointer and types on the real keyboard, so for the duration the machine is yours, not theirs — and concurrent human input measurably causes dropped characters and misdirected clicks.
-
-  1. A real API or CLI (gh, HTTP, writing a file). Headless, takes nothing from the user.
-  2. macos-automator-mcp (mcp__macos_automator__execute_script) using an app's AppleScript/JXA DICTIONARY. The app works internally, the pointer never moves, and it addresses things by name so nothing goes stale when a window moves.
-  3. The Chrome extension (mcp__claude-in-chrome__*) for anything in a web page. Costs the user only a browser tab, reads pages as text, and uses refs that survive reflow.
-  4. clickr, and AppleScript UI SCRIPTING via System Events. Both seize pointer and keyboard.
-
-Note the split within AppleScript: a dictionary script is tier 2 and free; System Events keystroke/click synthesises the same events clickr does and is tier 4. "It's AppleScript" does not mean non-invasive.
-
-clickr's own niche is the native macOS Open/Save dialog — unreachable from a browser extension and not usefully scriptable — plus apps with no scripting dictionary: Electron, games, remote desktop, canvas UIs.
-
-WHEN YOU DO TAKE OVER, TELL THE USER FIRST: roughly how long, and to keep hands off the mouse and keyboard until you say you are done. They cannot know otherwise, and their stray keystroke corrupts your work as surely as yours corrupts theirs.
-
-## Locked screen
-
-A locked screen blocks clicks — they hit the login shield — and \`list_windows\` with its default \`onScreenOnly:true\` returns nothing, but visual checks still work. Open a menu-bar item or popover through accessibility without a mouse event (System Events: \`click menu bar item 1 of menu bar 2\` of the app's process, via the macOS automation tool), find the window id from the full window list — \`list_windows\` with \`onScreenOnly:false\` (add \`includeAllLayers:true\` for menus and panels) — then \`screenshot\` with \`window:<id>\`, which composites the window regardless of screen state. Never conclude that a locked screen rules out a visual check.
-
-## Coordinates
-
-All coordinates are GLOBAL POINTS: origin at the top-left of the main display, +y down, in points rather than device pixels. Displays left of or above the main one have NEGATIVE coordinates, and any number of displays is supported. find_elements, list_windows, list_displays, screenshot and click all speak this same space, so a value from one goes straight into another.
-
-## Prefer text over pixels
-
-An image costs roughly (width*height)/750 tokens AND stays in the conversation, so it is re-sent on every later turn: 30 full-screen captures means ~54k tokens carried by every subsequent request, 120 means ~216k. Cost is cumulative, not per-screenshot, so a long run is dominated by captures taken near its start.
-
-  - find_elements queries controls by role/title through the Accessibility API and returns exact click coordinates as TEXT. ~60ms, roughly a tenth the cost of a capture, and exact rather than eyeballed. Works on native apps and on web pages. Use it to locate anything.
-  - read_text runs on-device OCR over a region and returns text only, no image. For canvas, video, remote desktop, or anything the accessibility tree cannot see.
-  - click already reports the element it hit, so verifying a click rarely needs a capture.
-
-IN A WEB PAGE OR AN ELECTRON APP, PASS webContent:true. The walk is breadth-first and the browser's own toolbar, tabs and menu bar sit above the page, so a search for a role the browser also uses — AXButton, AXGroup, AXTextField — spends the entire result cap on chrome before reaching the page. Measured on a live Chrome window: role AXButton under the defaults returned 40 elements, not one of them in the page, while the page held 3472 reachable nodes. The failure is indistinguishable from the page exposing nothing, which is exactly why it gets misdiagnosed. webContent:true starts at the page instead. Also check the \`truncated\` flag and the \`note\` that comes with it — a capped result is a partial answer wearing the costume of a complete one.
-
-Caveat: a heavily custom web UI may still not expose its controls. If webContent:true reports 'webContent (none found)', or finds the area but not your control, fall back to screenshot and measure — but capture a tight region rather than a display. Regions up to 800 points come back at 1:1, one image pixel per point, which is the reliable way to measure precisely. Re-capturing an unchanged region returns a text note instead of a duplicate image.
-
-## Stale coordinates are the main hazard
-
-Treat a coordinate as valid ONLY for the state you measured it in. Three things invalidate one silently, and all three look identical when they happen — the click lands somewhere plausible and nothing errors:
-
-  a. LAYOUT REFLOW — your own click inserts a toolbar and everything below shifts. The display layout is unchanged, so expectGeometry cannot see this. Guard it with expectRole/expectTitle on click and drag: clickr resolves what is actually under the point before posting the event and refuses on a mismatch. Pass them every time the coordinate came from find_elements — the role and title are right there in the result. That is a guard, not a licence to batch: still never batch coordinate clicks across a state-changing action, because a refusal costs a round-trip and re-querying is cheap.
-  b. DISPLAY GEOMETRY CHANGE — a display sleeping or a VNC client reconnecting moves every window, at any moment. Carry the geometry token from list_displays or find_elements into click as expectGeometry, and a mismatch refuses the action instead of clicking whatever moved underneath.
-  c. OCCLUSION — a window capture composites the target unobstructed, so a coordinate read off it can hit whatever is really on top. screenshot warns when this applies.
-
-## Verify, and prefer certainty over identification
-
-VERIFY EVERY STATE-CHANGING CLICK. click returns hitElement describing what it actually hit, and find_elements costs ~385 tokens, so verification no longer needs a ~2000-token screenshot. Check the result of anything that selects, deletes, publishes or otherwise changes state. Batching clicks and hoping was a rational response to expensive verification and no longer is.
-
-TAKE THE DIRECT LINK WHEN THE APP OFFERS ONE. After creating something, apps offer a route straight to it — "View post", "Show in Finder", "Open", "Go to record". Follow it rather than dismissing the dialog and hunting for the object in a list. Navigating directly means you are acting on the thing you just created, by construction; finding it in a list means identifying the right row among near-identical ones, and picking the wrong row is the most damaging mistake available in UI automation.
-
-## Typing
-
-Keyboard events go to whatever app is FRONTMOST, and a synthetic click does NOT activate the app it lands on — so always pass \`app\` to type_text and press_key. The tool descriptions explain the rest, including when keystrokes arrive scrambled and paste is required.
-
-KEYBOARD LAYOUT HAZARD: press_key posts US keycodes, not the character the operator's actual keyboard layout would produce. On German QWERTZ the z and y keys are physically swapped from US QWERTY, so key:"z" produces what QWERTZ prints as "y" and vice versa — a request for cmd+z (undo) can silently arrive as cmd+y (redo), which is exactly the kind of thing that causes a long, confusing misdiagnosis when the tool call "succeeded" but did the opposite of what was asked. Clickr does not attempt layout-aware remapping and will not. Verify the actual effect (read_text, or the app's resulting state) after any letter-key shortcut rather than trusting that the requested key name is what landed.
-
-## Recipe: a file upload through the native Open dialog
-
-This is clickr's core use case, and it needs no screenshots.
-
-  1. Trigger the file picker in the page (Chrome extension, by ref).
-  2. press_key "g" with ["cmd","shift"] — opens "Go to folder".
-  3. type_text the ABSOLUTE path with method:"paste", then press_key "return".
-  4. find_elements with role:"AXButton", titleContains:"Open" → click its centerX/centerY.
-  5. Control returns to the page; go back to the Chrome extension.
-
-If you need to confirm the dialog state, find_elements with role:"AXTextField" — the Go-to-folder field is the one with focused:true.`;
+- Actuating tools (click, move_mouse, drag, scroll, type_text, press_key, activate_app, set_window_bounds, set_clipboard) work only after the operator hands over control ("your controls" or \`clickr controls you\`). Never grant yourself control. Each actuating call needs a \`step\`: one plain sentence saying what and why. Read-only tools always work.
+- Prefer a real API/CLI, then AppleScript dictionaries, then a browser extension; clickr seizes the user's pointer and keyboard, so tell the user first and ask them to keep hands off.
+- Coordinates are global points (top-left of main display, +y down; other displays may be negative). Prefer find_elements/read_text (text) over screenshots; pass webContent:true in web pages and Electron apps.
+- Coordinates go stale (reflow, display change, occlusion): verify every state-changing click via its hitElement.`;

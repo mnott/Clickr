@@ -3,7 +3,11 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   ACTUATING_TOOLS,
@@ -15,6 +19,7 @@ import {
 } from "./controls.js";
 import { helper } from "./helper.js";
 import { INSTRUCTIONS } from "./instructions.js";
+import { readSkill, SKILL_PROMPT, SKILL_URI } from "./skill.js";
 import { announcement, logStep } from "./steps.js";
 import { tools } from "./tools.js";
 
@@ -25,10 +30,41 @@ const PKG_VERSION: string = createRequire(import.meta.url)("../package.json").ve
 const server = new Server(
   { name: "clickr", version: PKG_VERSION },
   {
-    capabilities: { tools: {} },
+    capabilities: { tools: {}, resources: {}, prompts: {} },
     instructions: INSTRUCTIONS,
   }
 );
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  resources: [
+    {
+      uri: SKILL_URI,
+      name: "Clickr skill",
+      description: "Full guidance for installing and operating Clickr.",
+      mimeType: "text/markdown",
+    },
+  ],
+}));
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  if (request.params.uri !== SKILL_URI) {
+    throw new Error(`Unknown resource: ${request.params.uri}`);
+  }
+  return { contents: [{ uri: SKILL_URI, mimeType: "text/markdown", text: readSkill() }] };
+});
+server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+  prompts: [
+    { name: SKILL_PROMPT, description: "Full guidance for installing and operating Clickr." },
+  ],
+}));
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  if (request.params.name !== SKILL_PROMPT) {
+    throw new Error(`Unknown prompt: ${request.params.name}`);
+  }
+  return {
+    description: "Clickr skill",
+    messages: [{ role: "user", content: { type: "text", text: readSkill() } }],
+  };
+});
 
 // Actuating tools carry an extra required `step` argument, injected here rather than
 // hand-written into all nine schemas so the requirement can't drift out of sync with
