@@ -344,6 +344,13 @@ clickr controls me              # take it back
 clickr controls status          # show who currently holds it (and the chain)
 ```
 
+## Read-only mode
+
+Start the MCP server as `clickr-mcp --readonly` (or with `CLICKR_READONLY=1`) and it
+lists and accepts only the observing tools. Actuating tools and the `controls` tool are
+hidden and refused with "Clickr is in read-only mode", even if the operator granted
+control. Example for a vmac guest: `vmac mcp add <vm> clickr "clickr-mcp --readonly"`.
+
 ## Typical loop
 
 1. `list_windows` or `list_displays` to find the target window.

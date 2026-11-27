@@ -521,6 +521,7 @@ try {
       console.log("  clickr controls [status]        show who currently holds the controls");
       console.log("  clickr steps [n]                print the last n logged agent steps (default 20)");
       console.log();
+      console.log("  clickr-mcp --readonly           MCP server option (or CLICKR_READONLY=1): observing tools only, no actuation, no `controls`");
       console.log(c.dim("  The MCP server itself is started by Claude Code, not by hand."));
       if (command) process.exit(1);
   }
