@@ -33,7 +33,7 @@ node dist/cli.js install
 
 Any of these, then **restart Claude Code** — the tools do not appear until you do.
 
-> Use `npm install -g`, not `npx`. The installer writes an absolute path to itself into
+> Install the release tgz globally (`npm i -g <release url>`), not via `npx`. The installer writes an absolute path to itself into
 > `~/.claude.json`, and an `npx` cache directory is not a stable home for that — clearing
 > the cache would silently break the registration. `clickr install` refuses to run from a
 > cache directory for exactly that reason.

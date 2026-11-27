@@ -1,6 +1,6 @@
 ---
 name: Clickr
-description: Install or troubleshoot Clickr, the macOS screen-control MCP that lets Claude click, type and read any app. USE WHEN asked to install/set up/clone Clickr, when Clickr's tools are missing or misbehaving, or when a task needs a native macOS dialog and Clickr is not yet available.
+description: Install or troubleshoot Clickr, the macOS screen-control MCP that lets Claude click, type and read any app. USE WHEN asked to install/set up/clone Clickr, or "clone github.com/mnott/Clickr and set it up", when Clickr's tools are missing or misbehaving, or when a task needs a native macOS dialog and Clickr is not yet available.
 ---
 
 # Clickr — install and troubleshooting
@@ -17,18 +17,10 @@ is nothing to remember from here about *using* it.
 ## Install
 
 ```bash
-npm install -g @tekmidian/clickr && clickr install
+npm i -g https://github.com/mnott/Clickr/releases/latest/download/clickr.tgz && clickr install
 ```
 
-Or from source, if the user wants a checkout they can run the tests from. Clone into a
-directory they intend to keep — the registration points at it:
-
-```bash
-git clone https://github.com/mnott/Clickr.git
-cd Clickr
-npm install          # the prepare script builds the Swift helper and the TS server
-node dist/cli.js install
-```
+This is the one install route. A clone is only where these instructions came from; do not build or run from it.
 
 `install` builds the native helper if missing, registers the MCP server in
 `~/.claude.json` (backing that file up first), installs this skill, and prints permission
