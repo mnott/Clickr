@@ -208,7 +208,7 @@ function install() {
     console.log("  directory can be cleared at any time, which would break that silently.");
     console.log();
     console.log(c.bold("  Install globally instead:"));
-    console.log("    npm install -g @tekmidian/clickr && clickr install");
+    console.log("    npm i -g https://github.com/mnott/Clickr/releases/latest/download/clickr.tgz && clickr install");
     process.exit(1);
   }
 
