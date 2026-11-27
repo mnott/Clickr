@@ -12,6 +12,7 @@ import {
 import {
   ACTUATING_TOOLS,
   READONLY_ERROR,
+  readonlyArgError,
   allowedInReadonly,
   isReadonly,
   checkAgentIdentity,
@@ -89,6 +90,11 @@ const STEP_PROPERTY = {
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: tools.filter((t) => !READONLY || allowedInReadonly(t.name)).map(({ name, description, inputSchema }) => {
     if (!ACTUATING_TOOLS.has(name)) {
+      if (READONLY && name === "screenshot") {
+        const sch = inputSchema as { properties?: Record<string, unknown>; [key: string]: unknown };
+        const { savePath: _omit, ...rest } = sch.properties ?? {};
+        return { name, description, inputSchema: { ...sch, properties: rest } };
+      }
       return { name, description, inputSchema };
     }
     const schema = inputSchema as {
@@ -120,6 +126,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   const rawArgs = (request.params.arguments ?? {}) as Record<string, any>;
+  if (READONLY) {
+    const argErr = readonlyArgError(tool.name, rawArgs);
+    if (argErr) return { isError: true, content: [{ type: "text", text: argErr }] };
+  }
   const actuating = ACTUATING_TOOLS.has(tool.name);
 
   if (actuating) {
