@@ -539,3 +539,27 @@ export function handoverMessage(): string {
     "still work -- you can look, but not touch."
   );
 }
+
+/**
+ * Read-only mode: the server is started with `--readonly` or CLICKR_READONLY=1. Decided
+ * once at startup from argv/env, never by anything the agent can send.
+ */
+export function isReadonly(
+  argv: readonly string[],
+  env: Record<string, string | undefined>
+): boolean {
+  if (argv.includes("--readonly")) return true;
+  const v = (env.CLICKR_READONLY ?? "").trim().toLowerCase();
+  return v === "1" || v === "true";
+}
+
+/**
+ * Whether a tool may be listed/called in read-only mode. Allow-list: anything not in
+ * READ_ONLY_TOOLS (actuating tools, and `controls`, which could grant control) is blocked.
+ */
+export function allowedInReadonly(toolName: string): boolean {
+  return READ_ONLY_TOOLS.has(toolName);
+}
+
+export const READONLY_ERROR =
+  "Clickr is in read-only mode: this tool is disabled. Only observing tools are available.";

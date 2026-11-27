@@ -11,6 +11,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   ACTUATING_TOOLS,
+  READONLY_ERROR,
+  allowedInReadonly,
+  isReadonly,
   checkAgentIdentity,
   handoverMessage,
   reapDeadHolder,
@@ -27,11 +30,15 @@ import { createRequire } from "node:module";
 // Keep the advertised version in step with the package rather than hand-maintaining it.
 const PKG_VERSION: string = createRequire(import.meta.url)("../package.json").version;
 
+const READONLY = isReadonly(process.argv.slice(2), process.env);
+
 const server = new Server(
   { name: "clickr", version: PKG_VERSION },
   {
     capabilities: { tools: {}, resources: {}, prompts: {} },
-    instructions: INSTRUCTIONS,
+    instructions: READONLY
+      ? `${INSTRUCTIONS}\n\n## READ-ONLY MODE IS ON\n\nClickr was started in read-only mode. Only observing tools are available; actuating tools and \`controls\` are disabled and refused regardless of any control handover.`
+      : INSTRUCTIONS,
   }
 );
 
@@ -80,7 +87,7 @@ const STEP_PROPERTY = {
 } as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: tools.map(({ name, description, inputSchema }) => {
+  tools: tools.filter((t) => !READONLY || allowedInReadonly(t.name)).map(({ name, description, inputSchema }) => {
     if (!ACTUATING_TOOLS.has(name)) {
       return { name, description, inputSchema };
     }
@@ -106,6 +113,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
       content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }],
     };
+  }
+
+  if (READONLY && !allowedInReadonly(tool.name)) {
+    return { isError: true, content: [{ type: "text", text: READONLY_ERROR }] };
   }
 
   const rawArgs = (request.params.arguments ?? {}) as Record<string, any>;

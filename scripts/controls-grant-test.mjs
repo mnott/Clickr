@@ -33,6 +33,10 @@ const {
   returnControl,
   returnToUser,
   stateFilePath,
+  isReadonly,
+  allowedInReadonly,
+  READ_ONLY_TOOLS,
+  ACTUATING_TOOLS,
 } = await import(join(repoRoot, "dist", "controls.js"));
 
 let passed = 0;
@@ -296,6 +300,57 @@ check(
   "that worker's own identity check now passes",
   checkAgentIdentity(hookAsWorker.state, "w-hook") === null
 );
+
+// --- read-only mode ---
+check("isReadonly: flag", isReadonly(["--readonly"], {}) === true);
+check("isReadonly: env 1", isReadonly([], { CLICKR_READONLY: "1" }) === true);
+check("isReadonly: default off", isReadonly([], {}) === false);
+check("isReadonly: env 0 off", isReadonly([], { CLICKR_READONLY: "0" }) === false);
+check("readonly allows every read-only tool", [...READ_ONLY_TOOLS].every(allowedInReadonly));
+check("readonly blocks actuating tools", [...ACTUATING_TOOLS].every((t) => !allowedInReadonly(t)));
+check("readonly blocks controls", !allowedInReadonly("controls"));
+
+{
+  const { spawn } = await import("node:child_process");
+  const rpc = (env, args) =>
+    new Promise((resolve) => {
+      const p = spawn("node", [join(repoRoot, "dist", "index.js"), ...args], {
+        env: { ...process.env, ...env },
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      const want = new Set([1, 2, 3]);
+      const got = {};
+      let buf = "";
+      p.stdout.setEncoding("utf8");
+      p.stdout.on("data", (d) => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          const m = JSON.parse(line);
+          got[m.id] = m;
+          want.delete(m.id);
+        }
+        if (!want.size) { p.kill(); resolve(got); }
+      });
+      const send = (o) => p.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...o }) + "\n");
+      send({ id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } });
+      send({ method: "notifications/initialized" });
+      send({ id: 2, method: "tools/list" });
+      send({ id: 3, method: "tools/call", params: { name: "controls", arguments: { holder: "agent" } } });
+    });
+  const ro = await rpc({ HOME: sandboxHome }, ["--readonly"]);
+  const names = ro[2].result.tools.map((t) => t.name);
+  check("readonly list is only read-only tools", names.length > 0 && names.every((n) => READ_ONLY_TOOLS.has(n)), names.join());
+  check("readonly call of controls refused", ro[3].result.isError === true && /read-only mode/.test(ro[3].result.content[0].text));
+  check("instructions mention read-only", /READ-ONLY MODE IS ON/.test(ro[1].result.instructions));
+  const rw = await rpc({ HOME: sandboxHome, CLICKR_READONLY: "" }, []);
+  check("normal list includes controls", rw[2].result.tools.some((t) => t.name === "controls"));
+  const env = await rpc({ HOME: sandboxHome, CLICKR_READONLY: "1" }, []);
+  check("env var enables read-only", !env[2].result.tools.some((t) => t.name === "click"));
+}
 
 returnToUser();
 rmSync(sandboxHome, { recursive: true, force: true });
