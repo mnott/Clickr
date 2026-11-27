@@ -11,7 +11,7 @@
  * Read-only with respect to the machine: no window is touched, no event is posted.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -312,7 +312,7 @@ check("readonly blocks controls", !allowedInReadonly("controls"));
 
 {
   const { spawn } = await import("node:child_process");
-  const rpc = (env, args) =>
+  const rpc = (env, args, callReq = { name: "controls", arguments: { holder: "agent" } }) =>
     new Promise((resolve) => {
       const p = spawn("node", [join(repoRoot, "dist", "index.js"), ...args], {
         env: { ...process.env, ...env },
@@ -339,13 +339,21 @@ check("readonly blocks controls", !allowedInReadonly("controls"));
       send({ id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "0" } } });
       send({ method: "notifications/initialized" });
       send({ id: 2, method: "tools/list" });
-      send({ id: 3, method: "tools/call", params: { name: "controls", arguments: { holder: "agent" } } });
+      send({ id: 3, method: "tools/call", params: callReq });
     });
   const ro = await rpc({ HOME: sandboxHome }, ["--readonly"]);
   const names = ro[2].result.tools.map((t) => t.name);
   check("readonly list is only read-only tools", names.length > 0 && names.every((n) => READ_ONLY_TOOLS.has(n)), names.join());
   check("readonly call of controls refused", ro[3].result.isError === true && /read-only mode/.test(ro[3].result.content[0].text));
   check("instructions mention read-only", /READ-ONLY MODE IS ON/.test(ro[1].result.instructions));
+  const shotPath = join(tmpdir(), `clickr-ro-shot-${process.pid}.png`);
+  rmSync(shotPath, { force: true });
+  const shot = await rpc({ HOME: sandboxHome }, ["--readonly"], { name: "screenshot", arguments: { savePath: shotPath } });
+  check("readonly screenshot savePath refused", shot[3].result.isError === true && /savePath is disabled/.test(shot[3].result.content[0].text));
+  check("readonly screenshot wrote no file", !existsSync(shotPath));
+  const shotTool = shot[2].result.tools.find((t) => t.name === "screenshot");
+  check("readonly screenshot schema hides savePath", shotTool && !("savePath" in (shotTool.inputSchema.properties ?? {})));
+  rmSync(shotPath, { force: true });
   const rw = await rpc({ HOME: sandboxHome, CLICKR_READONLY: "" }, []);
   check("normal list includes controls", rw[2].result.tools.some((t) => t.name === "controls"));
   const env = await rpc({ HOME: sandboxHome, CLICKR_READONLY: "1" }, []);
