@@ -154,12 +154,13 @@ check("read_text returns text and no image",
     !(ocr.result?.content ?? []).some((c) => c.type === "image"),
   `${ocrText.split("\n").length} line(s), ${ocrText.length} chars`);
 
-// --- Identical re-capture must not re-send pixels. ---
+// --- Identical re-capture must not re-send pixels. Tiny corner region (apple
+// logo): a large region catches live content (clocks, panes) and flaked on main. ---
 const r1 = await rpc("tools/call", {
-  name: "screenshot", arguments: { region: { x: 0, y: 0, width: 400, height: 200 } },
+  name: "screenshot", arguments: { region: { x: 0, y: 0, width: 24, height: 24 } },
 });
 const r2 = await rpc("tools/call", {
-  name: "screenshot", arguments: { region: { x: 0, y: 0, width: 400, height: 200 } },
+  name: "screenshot", arguments: { region: { x: 0, y: 0, width: 24, height: 24 } },
 });
 const had1 = (r1.result?.content ?? []).some((c) => c.type === "image");
 const had2 = (r2.result?.content ?? []).some((c) => c.type === "image");
@@ -167,7 +168,7 @@ check("unchanged region is not re-sent as an image", had1 && !had2,
   `first capture image=${had1}, second image=${had2}`);
 const forced = await rpc("tools/call", {
   name: "screenshot",
-  arguments: { region: { x: 0, y: 0, width: 400, height: 200 }, skipIfUnchanged: false },
+  arguments: { region: { x: 0, y: 0, width: 24, height: 24 }, skipIfUnchanged: false },
 });
 check("skipIfUnchanged:false forces a fresh image",
   (forced.result?.content ?? []).some((c) => c.type === "image"));
